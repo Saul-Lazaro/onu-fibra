@@ -70,18 +70,22 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
           echo "Versión $VERSION (versionCode $CODE)"
 
-      # Firma SIEMPRE con la misma llave (guardada como secreto del repositorio, no en el
-      # código): así cada versión se instala encima de la anterior sin desinstalar.
+      # Firma SIEMPRE con la misma llave (llave y contraseña guardadas como secretos del
+      # repositorio, no en el código): así cada versión se instala encima de la anterior sin desinstalar.
       - name: Llave de firma fija
         env:
           KEYSTORE_B64: ${{ secrets.MAXSONU_KEYSTORE_B64 }}
+          KEYSTORE_PASS: ${{ secrets.MAXSONU_KEYSTORE_PASS }}
         run: |
-          if [ -z "$KEYSTORE_B64" ]; then
-            echo "::error::Falta el secreto MAXSONU_KEYSTORE_B64 (llave de firma). Sin él cada APK tendría otra firma."
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$KEYSTORE_PASS" ]; then
+            echo "::error::Faltan los secretos MAXSONU_KEYSTORE_B64 y/o MAXSONU_KEYSTORE_PASS (llave de firma). Sin ellos cada APK tendría otra firma."
             exit 1
           fi
           mkdir -p ~/.android
           echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          # La firma de depuración de Gradle solo acepta la contraseña "android": la copia
+          # temporal de este servidor se convierte a esa contraseña (la llave no cambia).
+          keytool -storepasswd -keystore ~/.android/debug.keystore -storepass "$KEYSTORE_PASS" -new android
 
       - name: Compilar APK (debug)
         run: yes | buildozer android debug

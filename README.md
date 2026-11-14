@@ -30,8 +30,8 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
 - Cada compilación lleva versión **0.3.N** (N = número de compilación de GitHub) y un
   `versionCode` siempre creciente. Se ve en la app (bajo el logo y al pie) y en el
   archivo: artefacto **MaxsOnu-v0.3.N** → `MaxsOnu-v0.3.N.apk`.
-- Todas se firman con la **misma llave**, guardada como secreto del repositorio
-  `MAXSONU_KEYSTORE_B64` (no está en el código). Así cada APK nuevo se instala encima
+- Todas se firman con la **misma llave**, guardada como secretos del repositorio
+  `MAXSONU_KEYSTORE_B64` (la llave) y `MAXSONU_KEYSTORE_PASS` (su contraseña); nada de eso está en el código. Así cada APK nuevo se instala encima
   del anterior. Si el secreto falta, la compilación se detiene en vez de firmar con otra llave.
 - Guarda una copia de `maxsonu.keystore` fuera de GitHub: sin ella, una futura app
   tendría que desinstalarse para instalar. Huella SHA‑256:
