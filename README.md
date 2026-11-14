@@ -40,6 +40,10 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
 ## Uso en el teléfono
 
 1. Conéctate al Wi‑Fi de la ONU y abre la app: la IP se rellena sola.
+   Tras la primera conexión correcta, la app **guarda** IP, marca, usuario y contraseña
+   (almacenamiento privado de la app; se borra al desinstalar) y los rellena sola.
+   *Olvidar usuario y contraseña guardados* los borra.
+   Al conectar, la tarjeta 1 se oculta; *Cambiar de ONU* vuelve a mostrarla.
 2. Escribe usuario y contraseña de la etiqueta (si dejas el usuario vacío se usa
    el típico de la marca: Huawei `Epuser`, ZTE `user`, FiberHome `user`). **Conectar**.
 3. **Wi‑Fi**: solo aparecen las redes **encendidas**. Marca las redes, edita el nombre
@@ -49,8 +53,8 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
    - Android 10: la primera vez, una notificación pide *Permitir* redes sugeridas.
    - Android 9 o menos: se conecta directamente.
    Si solo cambias el nombre, la app usa la clave actual que lee de la ONU.
-4. **Equipos**: *Bloquear* / *Desbloquear*. La app marca "(este teléfono)" para
-   que el cliente no se bloquee a sí mismo.
+4. **Equipos**: *Bloquear* / *Desbloquear*. El celular donde está la app aparece
+   como **Este celular** y **no se puede bloquear** (la app y el servicio lo rechazan).
 
 ## Verificación del proveedor (igual que mi-router)
 
@@ -63,7 +67,7 @@ mi-router).
 
 **Modo técnico:** el botón *Desbloquear* pide la misma contraseña de técnico que
 mi-router (en el código solo está su hash) y deja la app sin verificación en ese
-celular hasta desinstalarla. Ante cualquier otro error, el aviso ofrece
+celular; tocando *Modo técnico activo* se puede **salir del modo técnico**. Ante cualquier otro error, el aviso ofrece
 **Abrir panel de la ONU** en el navegador.
 
 ## Seguridad: qué hace y qué no

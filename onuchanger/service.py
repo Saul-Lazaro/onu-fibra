@@ -139,9 +139,16 @@ def list_devices(conn: Connection) -> list[Device]:
         return _merge_devices(d)
 
 
-def block(conn: Connection, device: Device) -> list[Device]:
+def block(conn: Connection, device: Device, own_ip: str = "") -> list[Device]:
+    """Bloquea un equipo. Nunca el celular donde corre la app (`own_ip`): perdería la conexión."""
     mac = normalize_mac(device.mac)
+    if own_ip and device.ip == own_ip:
+        raise ValueError("Ese equipo es este celular: no se puede bloquear desde la app.")
     with _driver(conn) as d:
+        if own_ip:   # la IP puede haber cambiado desde que se mostró la lista
+            now = next((x for x in d.get_devices() if x.mac == mac), None)
+            if now is not None and now.ip == own_ip:
+                raise ValueError("Ese equipo es este celular: no se puede bloquear desde la app.")
         d.block_device(mac, device.name)
         return _merge_devices(d)
 

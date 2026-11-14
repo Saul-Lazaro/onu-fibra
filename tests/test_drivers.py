@@ -282,9 +282,9 @@ def test_realtek_clients_block_unblock(realtek):
     w = realtek.state["wlan"]
     with RealtekDriver(realtek.host, "admin", "stdONU101") as d:
         devs = d.get_devices()
-        assert [(x.mac, x.interface) for x in devs] == [("A4:C1:38:00:00:05", "5GHz"),
-                                                       ("A4:C1:38:00:00:24", "2.4GHz"),
-                                                       ("A4:C1:38:00:00:25", "2.4GHz")]
+        assert [(x.mac, x.interface, x.ip) for x in devs] == [("A4:C1:38:00:00:05", "5GHz", "192.168.1.30"),
+                                                             ("A4:C1:38:00:00:24", "2.4GHz", "192.168.1.31"),
+                                                             ("A4:C1:38:00:00:25", "2.4GHz", "192.168.1.32")]
         d.block_device("a4:c1:38:00:00:24")
         assert (w[0]["ac_mode"], w[1]["ac_mode"]) == (2, 2)      # lista negra en ambas bandas
         assert [m for _, m in w[0]["ac"]] == [m for _, m in w[1]["ac"]] == ["a4:c1:38:00:00:24"]
@@ -480,3 +480,23 @@ def test_android_9_connects_directly():
 def test_android_wifi_noop_without_creds_or_android():
     assert android_wifi.save_and_connect([("Casa", "")]) == ""
     assert "Conecta este equipo" in android_wifi.save_and_connect([("Casa", "Clave2026")])
+
+
+# --- no se puede bloquear el celular donde corre la app ---------------------------
+
+def test_cannot_block_own_phone(huawei):
+    conn = Connection(huawei.host, "huawei", "Epuser", "clave123")
+    ov = connect(conn)
+    phone = next(d for d in ov.devices if d.ip == "192.168.100.10")
+    with pytest.raises(ValueError, match="este celular"):
+        block(conn, phone, own_ip="192.168.100.10")
+    assert huawei.state["filter"] == []
+    # con la IP antigua en pantalla pero la ONU ya le asignó la del celular: también se rechaza
+    stale = type(phone)(mac=phone.mac, name=phone.name, ip="192.168.100.99")
+    with pytest.raises(ValueError, match="este celular"):
+        block(conn, stale, own_ip="192.168.100.10")
+    assert huawei.state["filter"] == []
+    # otro equipo sí se puede bloquear
+    other = next(d for d in ov.devices if d.ip != "192.168.100.10")
+    devs = block(conn, other, own_ip="192.168.100.10")
+    assert next(x for x in devs if x.mac == other.mac).blocked

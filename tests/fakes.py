@@ -502,6 +502,12 @@ function on_submit(){{ with(document.forms[0]){{ username.value=username1.value;
                            for m in st["wlan"][idx]["clients"]) or \
                 "<tr bgcolor=#b7b7b7><td><font size=2>None</td><td><font size=2>---</td></tr>"
             return self.send(f"<html><form action=/boaform/admin/formWirelessTbl><table>{rows}</table></form></html>")
+        if p.path == "/admin/dhcptbl.asp":
+            rows = "".join(f"<tr bgcolor=#b7b7b7><td><font size=2>192.168.1.{30 + i}</td><td><font size=2>{m}</td>"
+                           f"<td><font size=2>86000</td></tr>"
+                           for i, m in enumerate(c for wl in st["wlan"].values() for c in wl["clients"]))
+            return self.send(f"<html><form action=/boaform/formReflashClientTbl method=POST><table>{rows}</table>"
+                             f"</form></html>")
         if p.path == "/admin/wlactrl.asp":
             rows = "".join(f'<tr><td align=center width="45%" bgcolor="#C0C0C0"><font size="2">{m}</td>\n'
                            f'<td align=center width="20%" bgcolor="#C0C0C0"><input type="checkbox" name="select{n}" '

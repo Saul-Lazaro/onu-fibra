@@ -1,4 +1,5 @@
 """Maxs Onu (Kivy): Wi‑Fi y equipos conectados de ONUs de fibra Huawei, ZTE, FiberHome, V‑SOL y OptiTimes."""
+import json
 import os
 import socket
 import threading
@@ -223,8 +224,42 @@ KV = """
                             size: dp(80), dp(4)
                             radius: [dp(2)]
 
-            # ---------- 1. acceso ----------
+            # ---------- sesión abierta (reemplaza a la tarjeta 1) ----------
             Card:
+                opacity: 1 if root.connected else 0
+                disabled: not root.connected
+                height: self.minimum_height if root.connected else 0
+                padding: (dp(16), dp(12)) if root.connected else (0, 0)
+                Label:
+                    text: root.session_text
+                    color: DARK
+                    bold: True
+                    font_size: "15sp"
+                    text_size: self.width, None
+                    halign: "center"
+                    size_hint_y: None
+                    height: self.texture_size[1] + dp(4)
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(44)
+                    spacing: dp(10)
+                    SoftButton:
+                        text: "Abrir panel de la ONU"
+                        height: dp(44)
+                        font_size: "14sp"
+                        on_release: root.open_panel()
+                    SoftButton:
+                        text: "Cambiar de ONU"
+                        height: dp(44)
+                        font_size: "14sp"
+                        on_release: root.logout()
+
+            # ---------- 1. acceso (se oculta una vez iniciada la sesión) ----------
+            Card:
+                opacity: 0 if root.connected else 1
+                disabled: root.connected
+                height: 0 if root.connected else self.minimum_height
+                padding: (0, 0) if root.connected else (dp(16), dp(14))
                 Section:
                     text: "1. Datos de la etiqueta de tu ONU"
                 Field:
@@ -263,6 +298,13 @@ KV = """
                         height: dp(44)
                         font_size: "14sp"
                         on_release: root.ask_unlock()
+                LinkButton:
+                    text: "Olvidar usuario y contraseña guardados" if root.has_saved else ""
+                    height: dp(28) if root.has_saved else 0
+                    disabled: not root.has_saved
+                    color: MUTED
+                    font_size: "13sp"
+                    on_release: root.forget_login()
 
             # ---------- estado ----------
             Label:
@@ -410,6 +452,45 @@ def _save_unlock() -> None:
         pass
 
 
+def _login_file():
+    app = App.get_running_app()
+    return os.path.join(app.user_data_dir if app else ".", "inicio_sesion.json")
+
+
+def _load_login() -> dict:
+    """Datos de la última sesión correcta (IP, marca, usuario y contraseña de la etiqueta).
+    Están en el almacenamiento privado de la app: otras apps no pueden leerlo y se
+    borra al desinstalar (la copia de seguridad está desactivada)."""
+    try:
+        with open(_login_file(), encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_login(data: dict) -> None:
+    try:
+        with open(_login_file(), "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except OSError:
+        pass
+
+
+def _clear_login() -> None:
+    try:
+        os.remove(_login_file())
+    except OSError:
+        pass
+
+
+def _clear_unlock() -> None:
+    try:
+        os.remove(_unlock_file())
+    except OSError:
+        pass
+
+
 def open_in_browser(url: str) -> None:
     """Navegador del sistema (Android: Intent ACTION_VIEW; escritorio: webbrowser)."""
     if "ANDROID_ARGUMENT" in os.environ or "ANDROID_PRIVATE" in os.environ:
@@ -446,6 +527,8 @@ class Root(BoxLayout):
     can_wifi = BooleanProperty(False)
     can_rename = BooleanProperty(True)
     unlocked = BooleanProperty(False)   # modo técnico: no verifica el proveedor (hasta desinstalar)
+    has_saved = BooleanProperty(False)  # hay usuario/contraseña guardados
+    session_text = StringProperty("")
     wifi_note = StringProperty("")
     devices_note = StringProperty("")
     status = StringProperty("Conéctate al Wi‑Fi de tu ONU y escribe el usuario y la contraseña de la etiqueta.")
@@ -458,6 +541,15 @@ class Root(BoxLayout):
         self.my_ip = ""
         self.ids.host.text = suggest_host()
         self.unlocked = _load_unlock()
+        saved = _load_login()
+        if saved.get("password"):
+            self.ids.host.text = saved.get("host") or self.ids.host.text
+            if saved.get("brand") in self.ids.brand.values:
+                self.ids.brand.text = saved["brand"]
+            self.ids.user.text = saved.get("user", "")
+            self.ids.admin.text = saved["password"]
+            self.has_saved = True
+            self.status = "Tus datos están guardados: pulsa Conectar."
 
     # --- utilidades --------------------------------------------------------
     def _run(self, work, on_ok, busy_text="Trabajando…"):
@@ -532,8 +624,7 @@ class Root(BoxLayout):
     def ask_unlock(self):
         """Contraseña de técnico: permite usar la app sin verificar el proveedor."""
         if self.unlocked:
-            self._alert("Modo técnico", "La app ya está desbloqueada en este celular: no verifica el "
-                        "proveedor hasta que se desinstale.")
+            self._ask_lock()
             return
         box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
         box.add_widget(_wrap_label("Escribe la contraseña de desbloqueo.", color=MUTED,
@@ -566,6 +657,31 @@ class Root(BoxLayout):
         row.add_widget(ok)
         box.add_widget(row)
         self._unlock_popup, self._unlock_field, self._unlock_ok = popup, field, ok
+        popup.open()
+
+    def _ask_lock(self):
+        """Modo técnico activo: ofrecer salir de él."""
+        box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12), size_hint_y=None)
+        box.bind(minimum_height=box.setter("height"))
+        box.add_widget(_wrap_label("El modo técnico está activo en este celular: la app no verifica la "
+                                   "conexión con el proveedor. ¿Quieres salir del modo técnico?"))
+        popup = Popup(title="Modo técnico", content=box, size_hint=(0.9, None))
+        out = RoundButton(text="Salir del modo técnico", size_hint_y=None, height=dp(48), bg=RED)
+        keep = RoundButton(text="Seguir en modo técnico", size_hint_y=None, height=dp(48), bg=SOFT, color=DARK)
+
+        def lock(*_):
+            _clear_unlock()
+            self.unlocked = False
+            popup.dismiss()
+            self._msg("Saliste del modo técnico: la app vuelve a verificar el proveedor.", ok=None)
+
+        out.bind(on_release=lock)
+        keep.bind(on_release=lambda *_: popup.dismiss())
+        box.add_widget(out)
+        box.add_widget(keep)
+        box.bind(height=lambda *_: setattr(popup, "height", box.height + dp(92)))
+        popup.height = box.height + dp(92)
+        self._lock_popup, self._lock_out = popup, out
         popup.open()
 
     def _msg(self, text, ok=True):
@@ -623,7 +739,30 @@ class Root(BoxLayout):
         self.can_rename = ov.can_rename
         self._show_devices(ov.devices)
         self.connected = True
+        self.session_text = f"Conectado a tu ONU {conn.brand_name} · {conn.host}"
         self._msg(f"Conectado a tu ONU {conn.brand_name}.")
+        # Guardar los datos que funcionaron para no tener que escribirlos otra vez.
+        _save_login({"host": self.ids.host.text.strip(), "brand": self.ids.brand.text,
+                     "user": conn.username, "password": conn.password})
+        self.has_saved = True
+
+    def logout(self):
+        """Vuelve a la tarjeta 1 (los datos guardados se conservan)."""
+        if self.busy:
+            return
+        self.connected = self.can_wifi = False
+        self.conn = None
+        self.ids.nets.clear_widgets()
+        self.ids.devs.clear_widgets()
+        self.net_rows = []
+        self.ids.new_pw.text = self.ids.confirm.text = ""
+        self._msg("Sesión cerrada. Revisa los datos y pulsa Conectar.", ok=None)
+
+    def forget_login(self):
+        _clear_login()
+        self.has_saved = False
+        self.ids.user.text = self.ids.admin.text = ""
+        self._msg("Se borraron el usuario y la contraseña guardados.", ok=None)
 
     # --- Wi-Fi -------------------------------------------------------------
     def do_change(self):
@@ -660,7 +799,7 @@ class Root(BoxLayout):
             mine = bool(self.my_ip) and d.ip == self.my_ip
             title = d.name or "Equipo sin nombre"
             if mine:
-                title += "  (este teléfono)"
+                title += "  (este celular)"
             detail = " · ".join(x for x in (d.interface, d.ip, d.mac) if x)
             if d.blocked:
                 detail = "BLOQUEADO · " + detail
@@ -668,11 +807,16 @@ class Root(BoxLayout):
             lbl = Label(text=f"[b]{_esc(title)}[/b]\n[size=13sp][color=6b7a70]{_esc(detail)}[/color][/size]",
                         markup=True, halign="left", valign="middle", color=TEXT)
             lbl.bind(size=lambda w, s: setattr(w, "text_size", s))
-            btn = RoundButton(text="Desbloquear" if d.blocked else "Bloquear", size_hint_x=None, width=dp(118),
-                              bg=GREEN if d.blocked else RED, font_size="15sp")
-            btn.bind(on_release=lambda _b, dev=d, m=mine: self._ask(dev, m))
             row.add_widget(lbl)
-            row.add_widget(btn)
+            if mine and not d.blocked:
+                # El celular donde está la app no se puede bloquear: perdería la conexión.
+                row.add_widget(Label(text="Este celular", size_hint_x=None, width=dp(118), bold=True,
+                                     font_size="14sp", color=DARK))
+            else:
+                btn = RoundButton(text="Desbloquear" if d.blocked else "Bloquear", size_hint_x=None,
+                                  width=dp(118), bg=GREEN if d.blocked else RED, font_size="15sp")
+                btn.bind(on_release=lambda _b, dev=d, m=mine: self._ask(dev, m))
+                row.add_widget(btn)
             box.add_widget(row)
 
     def _ask(self, dev, mine):
@@ -682,8 +826,8 @@ class Root(BoxLayout):
         if dev.blocked:
             text = f"¿Permitir de nuevo el acceso a {name}?"
         elif mine:
-            text = (f"{name} es ESTE teléfono. Si lo bloqueas perderás la conexión y tendrás que "
-                    "desbloquearlo desde otro equipo. ¿Bloquear de todas formas?")
+            self._alert("No permitido", "Ese equipo es este celular: no se puede bloquear desde la app.")
+            return
         else:
             text = f"¿Bloquear a {name}? No podrá usar tu Wi‑Fi hasta que lo desbloquees."
         content = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12))
@@ -712,7 +856,9 @@ class Root(BoxLayout):
             self._show_devices(devices)
             self._msg(f"{name} {verb}.")
 
-        self._run(lambda: action(conn, dev), ok, "Aplicando en la ONU…")
+        my_ip = self.my_ip
+        self._run(lambda: action(conn, dev, own_ip=my_ip) if action is block else action(conn, dev), ok,
+                  "Aplicando en la ONU…")
 
     def do_refresh(self):
         conn = self.conn

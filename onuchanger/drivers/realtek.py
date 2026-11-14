@@ -357,6 +357,7 @@ class RealtekDriver(OnuDriver):
     # --- dispositivos -------------------------------------------------------
     def get_devices(self) -> list[Device]:
         blocked = {d.mac for d in self.get_blocked()}
+        ips = self._dhcp_ips()
         devices: dict[str, Device] = {}
         for idx, band in self._wlan_indexes().items():
             try:
@@ -365,8 +366,25 @@ class RealtekDriver(OnuDriver):
                 continue
             for m in re.finditer(r"<td[^>]*>(?:\s*<font[^>]*>)?\s*([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\s*<", html):
                 mac = normalize_mac(m.group(1))
-                devices.setdefault(mac, Device(mac=mac, interface=band, online=True, blocked=mac in blocked))
+                devices.setdefault(mac, Device(mac=mac, ip=ips.get(mac, ""), interface=band, online=True,
+                                               blocked=mac in blocked))
         return sorted(devices.values(), key=lambda d: d.mac)
+
+    def _dhcp_ips(self) -> dict[str, str]:
+        """MAC -> IP desde la tabla DHCP (/admin/dhcptbl.asp: filas IP | MAC | tiempo).
+        Sirve para reconocer el celular donde corre la app y no dejar bloquearlo."""
+        try:
+            html = self._get("/admin/dhcptbl.asp")
+        except (FileNotFoundError, OnuError):
+            return {}
+        out = {}
+        for ip, mac in re.findall(r"<td[^>]*>(?:\s*<font[^>]*>)?\s*(\d{1,3}(?:\.\d{1,3}){3})\s*<.*?"
+                                  r"<td[^>]*>(?:\s*<font[^>]*>)?\s*([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})", html, re.S):
+            try:
+                out[normalize_mac(mac)] = ip
+            except ValueError:
+                continue
+        return out
 
     def _acl(self, idx: int):
         html = self._page("/admin/wlactrl.asp", idx)
