@@ -306,3 +306,43 @@ def test_realtek_service_overview_optitimes():
         assert "solo cambia la clave" in ov.wifi_note and len(ov.networks) == 3
         msg = change_wifi(conn, [(ov.networks[1], None)], "ClaveCasa77", "ClaveCasa77")
         assert "Familia (2.4GHz: clave)" in msg
+
+
+# --- verificación del proveedor (igual que mi-router) ----------------------------
+
+from onuchanger import isp
+
+
+def test_isp_unlock_password(monkeypatch):
+    # La contraseña real de técnico no se escribe en el repositorio: se prueba el mecanismo
+    # con una de ejemplo y se fija que el hash sea el mismo de mi-router.
+    import hashlib
+    assert isp._UNLOCK_HASH == "d9e6ace1e6df09c877c513e26eff81734d4f430c69a48450a58c9d8e797e418c"
+    assert not isp.check_unlock_password("")
+    assert not isp.check_unlock_password("adivinanza")
+    monkeypatch.setattr(isp, "_UNLOCK_HASH", hashlib.sha256(isp._UNLOCK_SALT + b"clave-de-prueba").hexdigest())
+    assert isp.check_unlock_password("clave-de-prueba")
+
+
+def test_isp_unreachable_when_ping_fails(monkeypatch):
+    monkeypatch.setattr(isp, "_ping", lambda host, timeout: False)
+    assert not isp.isp_reachable("10.99.0.1", timeout=1)
+
+
+def test_isp_ok_when_ping_answers(monkeypatch):
+    monkeypatch.setattr(isp, "_ping", lambda host, timeout: True)
+    assert isp.isp_reachable("10.99.0.1", timeout=1)
+
+
+def test_isp_tcp_fallback_only_without_ping(monkeypatch):
+    monkeypatch.setattr(isp, "_ping", lambda host, timeout: None)
+    monkeypatch.setattr(isp, "_tcp_probe", lambda host, timeout: False)
+    assert not isp.isp_reachable("10.99.0.1", timeout=1)
+    monkeypatch.setattr(isp, "_tcp_probe", lambda host, timeout: True)
+    assert isp.isp_reachable("10.99.0.1", timeout=1)
+
+
+def test_isp_settings_match_mi_router():
+    assert isp.ISP_HOST == "10.99.0.1"
+    assert isp.ISP_PHONES == ("996770477", "982877033")
+    assert "MaxSolution" in isp.ISP_MESSAGE

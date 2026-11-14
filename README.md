@@ -33,6 +33,20 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
 4. **Equipos**: *Bloquear* / *Desbloquear*. La app marca "(este teléfono)" para
    que el cliente no se bloquee a sí mismo.
 
+## Verificación del proveedor (igual que mi-router)
+
+Al pulsar **Conectar**, la app hace ping a **10.99.0.1** (equipo de la Red
+MaxSolution). Si no responde, no entra a la ONU y muestra *Sin conexión con el
+proveedor* con los teléfonos 996 770 477 · 982 877 033, un botón de **WhatsApp**
+para cada uno y el aviso de que solo es para clientes. Si el teléfono no permite
+ping, se usa una prueba TCP como alternativa (`onuchanger/isp.py`, copiado de
+mi-router).
+
+**Modo técnico:** el botón *Desbloquear* pide la misma contraseña de técnico que
+mi-router (en el código solo está su hash) y deja la app sin verificación en ese
+celular hasta desinstalarla. Ante cualquier otro error, el aviso ofrece
+**Abrir panel de la ONU** en el navegador.
+
 ## Seguridad: qué hace y qué no
 
 - Solo usa la interfaz web local de la ONU con las credenciales del cliente.

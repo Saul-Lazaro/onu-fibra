@@ -1,6 +1,8 @@
 """App Android (Kivy): Wi‑Fi y equipos conectados de ONUs de fibra Huawei, ZTE y FiberHome."""
+import os
 import socket
 import threading
+from urllib.parse import quote
 
 from kivy.app import App
 from kivy.clock import mainthread
@@ -16,6 +18,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.textinput import TextInput
 
 from onuchanger.base import OnuError
+from onuchanger.isp import ISP_MESSAGE, ISP_PHONES, WHATSAPP_TEXT, check_unlock_password, isp_reachable
 from onuchanger.service import (BRAND_KEYS, USER_HINTS, Connection, block, change_wifi, connect, list_devices,
                                 suggest_host, unblock)
 
@@ -60,6 +63,14 @@ KV = """
     font_size: "17sp"
     background_normal: ""
     background_color: (0.13, 0.45, 0.85, 1) if not self.disabled else (0.3, 0.3, 0.35, 1)
+
+<LinkButton@Button>:
+    size_hint_y: None
+    height: dp(32)
+    font_size: "14sp"
+    background_normal: ""
+    background_down: ""
+    background_color: 0, 0, 0, 0
 
 <Root>:
     canvas.before:
@@ -113,6 +124,15 @@ KV = """
                 text: "Conectando…" if root.busy and not root.connected else "Conectar"
                 disabled: root.busy
                 on_release: root.do_connect()
+            LinkButton:
+                text: "Abrir panel de la ONU"
+                color: 0.65, 0.8, 1, 1
+                on_release: root.open_panel()
+            LinkButton:
+                text: "Modo técnico activo" if root.unlocked else "Desbloquear"
+                bold: True
+                color: (0.45, 0.85, 0.5, 1) if root.unlocked else (0.62, 0.62, 0.68, 1)
+                on_release: root.ask_unlock()
 
             Label:
                 text: root.status
@@ -195,6 +215,49 @@ KV = """
 """
 
 
+def _unlock_file():
+    """Almacenamiento privado de la app: Android lo borra al desinstalarla (y la copia de
+    seguridad está desactivada en buildozer.spec, así que no vuelve al reinstalar)."""
+    app = App.get_running_app()
+    return os.path.join(app.user_data_dir if app else ".", "desbloqueo_tecnico")
+
+
+def _load_unlock() -> bool:
+    try:
+        with open(_unlock_file()) as fh:
+            return fh.read().strip() == "1"
+    except OSError:
+        return False
+
+
+def _save_unlock() -> None:
+    try:
+        with open(_unlock_file(), "w") as fh:
+            fh.write("1")
+    except OSError:
+        pass
+
+
+def open_in_browser(url: str) -> None:
+    """Navegador del sistema (Android: Intent ACTION_VIEW; escritorio: webbrowser)."""
+    if "ANDROID_ARGUMENT" in os.environ or "ANDROID_PRIVATE" in os.environ:
+        from jnius import autoclass
+        Intent = autoclass("android.content.Intent")
+        Uri = autoclass("android.net.Uri")
+        activity = autoclass("org.kivy.android.PythonActivity").mActivity
+        activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    else:
+        import webbrowser
+        webbrowser.open(url)
+
+
+def _wrap_label(text, color=(0.92, 0.92, 0.95, 1), font_size="15sp", halign="left"):
+    lbl = Label(text=text, color=color, font_size=font_size, halign=halign, valign="middle", size_hint_y=None)
+    lbl.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
+             texture_size=lambda w, v: setattr(w, "height", v[1] + dp(2)))
+    return lbl
+
+
 def own_ip(host: str) -> str:
     """IP de este teléfono en la red de la ONU (sin enviar nada)."""
     try:
@@ -210,6 +273,7 @@ class Root(BoxLayout):
     connected = BooleanProperty(False)
     can_wifi = BooleanProperty(False)
     can_rename = BooleanProperty(True)
+    unlocked = BooleanProperty(False)   # modo técnico: no verifica el proveedor (hasta desinstalar)
     wifi_note = StringProperty("")
     devices_note = StringProperty("")
     status = StringProperty("Conéctate al Wi‑Fi de tu ONU y escribe el usuario y la contraseña de la etiqueta.")
@@ -221,6 +285,7 @@ class Root(BoxLayout):
         self.net_rows = []   # (CheckBox, TextInput, WifiNetwork)
         self.my_ip = ""
         self.ids.host.text = suggest_host()
+        self.unlocked = _load_unlock()
 
     # --- utilidades --------------------------------------------------------
     def _run(self, work, on_ok, busy_text="Trabajando…"):
@@ -246,8 +311,90 @@ class Root(BoxLayout):
         self.busy = False
         if error:
             self._msg(error, ok=False)
+            if error == ISP_MESSAGE:
+                self._alert("Sin conexión con el proveedor", error, phones=ISP_PHONES, center=True)
+            else:
+                self._alert("No se pudo completar", error, panel=not self.connected)
         else:
             callback()
+
+    def _alert(self, title, text, panel=False, phones=(), center=False):
+        """Ventana de mensaje. `phones`: botones de WhatsApp; `panel`: abrir el panel web."""
+        box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12), size_hint_y=None)
+        box.bind(minimum_height=box.setter("height"))
+        box.add_widget(_wrap_label(text, halign="center" if center else "left"))
+        popup = Popup(title=title, content=box, size_hint=(0.9, None))
+        for number in phones:                     # WhatsApp a cada número (Perú: +51)
+            pretty = f"{number[:3]} {number[3:6]} {number[6:]}"
+            chat = Button(text=f"WhatsApp {pretty}", size_hint_y=None, height=dp(48),
+                          background_normal="", background_color=(0.145, 0.827, 0.400, 1))
+            url = f"https://wa.me/51{number}?text={quote(WHATSAPP_TEXT)}"
+            chat.bind(on_release=lambda *_, u=url: open_in_browser(u))
+            box.add_widget(chat)
+        if panel:
+            web = Button(text="Abrir panel de la ONU", size_hint_y=None, height=dp(48),
+                         background_normal="", background_color=GREY)
+            web.bind(on_release=lambda *_: (popup.dismiss(), self.open_panel()))
+            box.add_widget(web)
+        ok = Button(text="Entendido", size_hint_y=None, height=dp(48), background_normal="", background_color=BLUE)
+        ok.bind(on_release=lambda *_: popup.dismiss())
+        box.add_widget(ok)
+        box.bind(height=lambda *_: setattr(popup, "height", box.height + dp(92)))
+        popup.height = box.height + dp(92)
+        self._last_alert = popup
+        popup.open()
+
+    def open_panel(self):
+        """Abre el panel web de la ONU (la IP escrita) en el navegador del celular."""
+        host = (self.conn.host if self.connected and self.conn else self.ids.host.text).strip()
+        if not host:
+            self._alert("Abrir panel", "Escribe primero la IP de la ONU.")
+            return
+        url = host if host.startswith("http") else f"http://{host}"
+        try:
+            open_in_browser(url)
+            self._msg(f"Abriendo {url} en el navegador…", ok=None)
+        except Exception as e:
+            self._alert("Abrir panel", f"No se pudo abrir el navegador: {e}")
+
+    def ask_unlock(self):
+        """Contraseña de técnico: permite usar la app sin verificar el proveedor."""
+        if self.unlocked:
+            self._alert("Modo técnico", "La app ya está desbloqueada en este celular: no verifica el "
+                        "proveedor hasta que se desinstale.")
+            return
+        box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
+        box.add_widget(_wrap_label("Escribe la contraseña de desbloqueo.", color=(0.62, 0.62, 0.68, 1),
+                                   font_size="14sp"))
+        field = TextInput(password=True, multiline=False, hint_text="contraseña de desbloqueo",
+                          size_hint_y=None, height=dp(48), font_size="16sp", padding=[dp(12), dp(13)])
+        box.add_widget(field)
+        error = _wrap_label("", color=(1, 0.45, 0.4, 1), font_size="13sp")
+        box.add_widget(error)
+        row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(10))
+        popup = Popup(title="Desbloquear", content=box, size_hint=(0.88, None), height=dp(290),
+                      auto_dismiss=True)
+        cancel = Button(text="Cancelar", background_normal="", background_color=GREY)
+        ok = Button(text="Desbloquear", background_normal="", background_color=BLUE)
+
+        def try_unlock(*_):
+            if check_unlock_password(field.text):
+                self.unlocked = True
+                _save_unlock()
+                popup.dismiss()
+                self._msg("Modo técnico activo: la app no verificará el proveedor.", ok=True)
+            else:
+                field.text = ""
+                error.text = "Contraseña incorrecta."
+
+        cancel.bind(on_release=lambda *_: popup.dismiss())
+        ok.bind(on_release=try_unlock)
+        field.bind(on_text_validate=try_unlock)
+        row.add_widget(cancel)
+        row.add_widget(ok)
+        box.add_widget(row)
+        self._unlock_popup, self._unlock_field, self._unlock_ok = popup, field, ok
+        popup.open()
 
     def _msg(self, text, ok=True):
         self.status_color = {True: [0.45, 0.85, 0.5, 1], False: [1, 0.45, 0.4, 1], None: [0.8, 0.8, 0.85, 1]}[ok]
@@ -266,7 +413,21 @@ class Root(BoxLayout):
         conn = Connection(self.ids.host.text, BRAND_KEYS[self.ids.brand.text], self.ids.user.text,
                           self.ids.admin.text)
         self.my_ip = own_ip(conn.host)
-        self._run(lambda: connect(conn), lambda ov: self._show(conn, ov), "Conectando con la ONU…")
+        skip_isp = self.unlocked
+
+        def work():
+            if not skip_isp:
+                self._progress("Verificando conexión con el proveedor…")
+                if not isp_reachable():
+                    raise OnuError(ISP_MESSAGE)
+            self._progress("Conectando con la ONU…")
+            return connect(conn)
+
+        self._run(work, lambda ov: self._show(conn, ov), "Verificando conexión con el proveedor…")
+
+    @mainthread
+    def _progress(self, text):
+        self._msg(text, ok=None)
 
     def _show(self, conn, ov):
         self.conn = conn
