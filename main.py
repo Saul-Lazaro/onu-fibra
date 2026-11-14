@@ -134,7 +134,7 @@ KV = """
     background_color: 0, 0, 0, 0
     color: DARK
 
-<Card@BoxLayout>:
+<Card>:
     orientation: "vertical"
     size_hint_y: None
     height: self.minimum_height
@@ -251,14 +251,17 @@ KV = """
                     on_release: root.do_connect()
                 BoxLayout:
                     size_hint_y: None
-                    height: dp(30)
-                    LinkButton:
+                    height: dp(44)
+                    spacing: dp(10)
+                    SoftButton:
                         text: "Abrir panel de la ONU"
+                        height: dp(44)
+                        font_size: "14sp"
                         on_release: root.open_panel()
-                    LinkButton:
+                    SoftButton:
                         text: "Modo técnico activo" if root.unlocked else "Desbloquear"
-                        bold: True
-                        color: GREEN if root.unlocked else MUTED
+                        height: dp(44)
+                        font_size: "14sp"
                         on_release: root.ask_unlock()
 
             # ---------- estado ----------
@@ -289,7 +292,7 @@ KV = """
                     size_hint_y: None
                     height: self.minimum_height
                     spacing: dp(6)
-                BoxLayout:
+                Hideable:
                     # Controles de Wi‑Fi: se pliegan por completo si la marca no lo permite.
                     orientation: "vertical"
                     spacing: dp(10)
@@ -354,6 +357,28 @@ KV = """
                 size_hint_y: None
                 height: dp(20)
 """
+
+
+class Hideable(BoxLayout):
+    """Contenedor que se oculta con opacity 0 / altura 0. Mientras está oculto NO recibe
+    toques: en Kivy un widget desactivado se queda con los toques que caen encima, y el
+    contenido de una tarjeta plegada sigue ocupando sitio sobre los botones visibles."""
+
+    def _hidden(self):
+        return self.opacity == 0 or self.height <= 0
+
+    def on_touch_down(self, touch):
+        return False if self._hidden() else super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        return False if self._hidden() else super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        return False if self._hidden() else super().on_touch_up(touch)
+
+
+class Card(Hideable):
+    """Tarjeta blanca (estilo en el KV)."""
 
 
 class RoundButton(Button):
