@@ -82,10 +82,19 @@ jobs:
             exit 1
           fi
           mkdir -p ~/.android
-          echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+          # Tolera espacios/saltos de línea que se cuelan al copiar y pegar el texto.
+          printf '%s' "$KEYSTORE_B64" | tr -d ' \r\n\t' | base64 -d > ~/.android/debug.keystore \
+            || { echo "::error::MAXSONU_KEYSTORE_B64 no es el contenido de maxsonu.keystore.b64 (texto base64)."; exit 1; }
+          PASS=$(printf '%s' "$KEYSTORE_PASS" | tr -d '\r\n')
+          keytool -list -keystore ~/.android/debug.keystore -storepass "$PASS" >/dev/null 2>&1 \
+            || { echo "::error::La llave no abre con MAXSONU_KEYSTORE_PASS (contraseña incorrecta o llave equivocada)."; exit 1; }
           # La firma de depuración de Gradle solo acepta la contraseña "android": la copia
           # temporal de este servidor se convierte a esa contraseña (la llave no cambia).
-          keytool -storepasswd -keystore ~/.android/debug.keystore -storepass "$KEYSTORE_PASS" -new android
+          keytool -storepasswd -keystore ~/.android/debug.keystore -storepass "$PASS" -new android
+          FP=$(keytool -list -v -keystore ~/.android/debug.keystore -storepass android | grep "SHA256:" | head -1 | sed 's/.*SHA256: //; s/://g' | tr 'A-F' 'a-f')
+          [ "$FP" = "ed809c21d661362b73c2cf8432abeb1b9333e7375851d26bdac743b3f17890a0" ] \
+            || { echo "::error::La llave del secreto no es la de Maxs Onu (huella $FP)."; exit 1; }
+          echo "Llave de Maxs Onu cargada (huella OK)"
 
       - name: Compilar APK (debug)
         run: yes | buildozer android debug
