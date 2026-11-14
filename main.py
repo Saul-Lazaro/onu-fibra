@@ -20,6 +20,7 @@ from kivy.uix.textinput import TextInput
 
 from onuchanger.android_wifi import save_and_connect
 from onuchanger.base import OnuError
+from onuchanger.version import VERSION
 from onuchanger.isp import ISP_MESSAGE, ISP_PHONES, WHATSAPP_TEXT, check_unlock_password, isp_reachable
 from onuchanger.service import (BRAND_KEYS, USER_HINTS, Connection, block, change_wifi, connect, list_devices,
                                 suggest_host, unblock)
@@ -199,6 +200,13 @@ KV = """
                     size_hint_y: None
                     height: dp(34)
                 Label:
+                    text: "Versión " + app.version_text
+                    color: GREEN
+                    bold: True
+                    font_size: "13sp"
+                    size_hint_y: None
+                    height: dp(18)
+                Label:
                     text: "Huawei · ZTE · FiberHome · V‑SOL · OptiTimes"
                     color: MUTED
                     font_size: "13sp"
@@ -340,7 +348,7 @@ KV = """
                     on_release: root.do_refresh()
 
             Label:
-                text: "Group S & M · Max's Solution E.I.R.L."
+                text: "Group S & M · Max's Solution E.I.R.L. · Maxs Onu v" + app.version_text
                 color: MUTED
                 font_size: "12sp"
                 size_hint_y: None
@@ -697,6 +705,7 @@ def _esc(text: str) -> str:
 
 class OnuApp(App):
     title = "Maxs Onu"
+    version_text = VERSION
     icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
 
     def build(self):

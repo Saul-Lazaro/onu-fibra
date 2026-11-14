@@ -53,12 +53,60 @@ jobs:
             ~/.buildozer
             .buildozer
           key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
+      # Versión automática: 0.3.<número de compilación>. versionCode siempre creciente para que
+      # Android acepte cada APK como actualización del anterior.
+      - name: Versión
+        run: |
+          VERSION="0.3.${{ github.run_number }}"
+          CODE=$((300 + ${{ github.run_number }}))
+          sed -i "s/^version = .*/version = ${VERSION}/" buildozer.spec
+          grep -q "^android.numeric_version" buildozer.spec \
+            && sed -i "s/^android.numeric_version = .*/android.numeric_version = ${CODE}/" buildozer.spec \
+            || sed -i "/^version = /a android.numeric_version = ${CODE}" buildozer.spec
+          printf 'VERSION = "%s"\nBUILD = %s\n' "$VERSION" "$CODE" > onuchanger/version.py
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Versión $VERSION (versionCode $CODE)"
+
+      # Firma SIEMPRE con la misma llave (guardada como secreto del repositorio, no en el
+      # código): así cada versión se instala encima de la anterior sin desinstalar.
+      - name: Llave de firma fija
+        env:
+          KEYSTORE_B64: ${{ secrets.MAXSONU_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Falta el secreto MAXSONU_KEYSTORE_B64 (llave de firma). Sin él cada APK tendría otra firma."
+            exit 1
+          fi
+          mkdir -p ~/.android
+          echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
 
       - name: Compilar APK (debug)
         run: yes | buildozer android debug
 
+      # Re-firma con la llave fija (por si Buildozer usó otra) y comprueba la huella.
+      - name: Firmar con la llave fija
+        run: |
+          KS=~/.android/debug.keystore
+          BT=$(ls -d ~/.buildozer/android/platform/android-sdk/build-tools/* | sort -V | tail -1)
+          for apk in bin/*.apk; do
+            "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
+              --ks-key-alias androiddebugkey "$apk"
+          done
+          # Huella pública de la llave de Maxs Onu (no es secreta).
+          EXPECTED="ed809c21d661362b73c2cf8432abeb1b9333e7375851d26bdac743b3f17890a0"
+          "$BT/apksigner" verify --print-certs bin/*.apk | grep -i "SHA-256"
+          "$BT/apksigner" verify --print-certs bin/*.apk | grep -qi "$EXPECTED" \
+            || { echo "::error::El APK no quedó firmado con la llave de Maxs Onu"; exit 1; }
+          echo "FIRMA OK (llave fija de Maxs Onu)"
+          mkdir -p out
+          cp bin/*.apk "out/MaxsOnu-v${VERSION}.apk"
+          ls -la out
+
       - uses: actions/upload-artifact@v4
         with:
-          name: onu-fibra-apk
-          path: bin/*.apk
+          name: MaxsOnu-v${{ env.VERSION }}
+          path: out/*.apk
           if-no-files-found: error
