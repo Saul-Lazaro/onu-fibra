@@ -19,8 +19,7 @@ USER_HINTS = {
     "realtek": "Usuario de la etiqueta (p. ej. admin, user)",
 }
 
-CUT_MSG = ("La ONU cortó el Wi‑Fi al aplicar el cambio (es normal si este teléfono estaba en esa red). "
-           "Reconéctate con el nombre y la clave nuevos y pulsa Conectar para comprobarlo.")
+CUT_MSG = ("La ONU reinició el Wi‑Fi al aplicar el cambio (es normal si este teléfono estaba en esa red).")
 
 
 @dataclass
@@ -70,7 +69,10 @@ def connect(conn: Connection) -> Overview:
         ov.can_rename = d.can_rename_wifi
         if d.can_change_wifi:
             try:
-                ov.networks = d.get_wifi_networks()
+                # Solo las redes encendidas: las apagadas no se muestran.
+                ov.networks = [n for n in d.get_wifi_networks() if n.enabled]
+                if not ov.networks:
+                    ov.wifi_note = "No hay redes Wi‑Fi encendidas en esta ONU."
             except NotSupportedError as e:
                 ov.wifi_note = str(e)
             if ov.networks and not d.can_rename_wifi:
@@ -86,8 +88,15 @@ def connect(conn: Connection) -> Overview:
     return ov
 
 
+@dataclass
+class ChangeResult:
+    message: str
+    creds: list[tuple[str, str]]   # (nombre, clave) finales, para reconectar el celular
+    cut: bool = False              # la ONU cortó el Wi‑Fi durante el cambio
+
+
 def change_wifi(conn: Connection, changes: list[tuple[WifiNetwork, str | None]],
-                new_password: str, confirm: str) -> str:
+                new_password: str, confirm: str) -> ChangeResult:
     """changes: [(red, nuevo_nombre o None)]. Si new_password está vacío, no se cambia la clave."""
     if new_password or confirm:
         if new_password != confirm:
@@ -102,6 +111,13 @@ def change_wifi(conn: Connection, changes: list[tuple[WifiNetwork, str | None]],
         if s is not None:
             validate_ssid(s)
 
+    # Datos finales de cada red, para que el celular se reconecte solo.
+    creds = []
+    for net, ssid in todo:
+        key = password or net.extra.get("psk", "")
+        if key and (ssid or net.ssid, key) not in creds:
+            creds.append((ssid or net.ssid, key))
+
     d = _driver(conn)
     done = []
     try:
@@ -112,11 +128,10 @@ def change_wifi(conn: Connection, changes: list[tuple[WifiNetwork, str | None]],
             what = " y ".join(x for x, on in (("nombre", ssid), ("clave", password)) if on)
             done.append(f"{ssid or net.ssid} ({net.band}: {what})")
     except (requests.ConnectionError, requests.Timeout):
-        return CUT_MSG
+        return ChangeResult(CUT_MSG, creds, cut=True)
     finally:
         d.close()
-    return ("Listo. Cambios guardados en " + ", ".join(done) +
-            ". Los equipos conectados deberán reconectarse" + (" con la nueva clave." if password else "."))
+    return ChangeResult("Listo. Cambios guardados en " + ", ".join(done) + ".", creds)
 
 
 def list_devices(conn: Connection) -> list[Device]:

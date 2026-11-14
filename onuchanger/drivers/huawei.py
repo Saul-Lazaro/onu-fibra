@@ -165,6 +165,11 @@ class HuaweiDriver(OnuDriver):
                 id=args[0], band=Band.B24 if inst <= 4 else Band.B5, ssid=args[3],
                 enabled=(args[2] == "1") if has_enable else True,
                 extra={"instance": inst, "page": page})
+        # Clave actual (si la página la publica): sirve para reconectar el celular al renombrar.
+        for args in js_constructors(html, "stPreSharedKey"):
+            m = re.search(r"WLANConfiguration\.(\d+)\.PreSharedKey\.1$", args[0] if args else "")
+            if m and int(m.group(1)) in nets and len(args) > 1 and args[1]:
+                nets[int(m.group(1))].extra["psk"] = args[1]
 
     def set_wifi(self, network: WifiNetwork, ssid: str | None = None, password: str | None = None) -> None:
         if ssid is None and password is None:

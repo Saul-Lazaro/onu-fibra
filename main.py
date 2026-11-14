@@ -1,4 +1,4 @@
-"""App Android (Kivy): Wi‑Fi y equipos conectados de ONUs de fibra Huawei, ZTE y FiberHome."""
+"""Maxs Onu (Kivy): Wi‑Fi y equipos conectados de ONUs de fibra Huawei, ZTE, FiberHome, V‑SOL y OptiTimes."""
 import os
 import socket
 import threading
@@ -7,9 +7,10 @@ from urllib.parse import quote
 from kivy.app import App
 from kivy.clock import mainthread
 from kivy.core.window import Window
+from kivy.factory import Factory
 from kivy.lang import Builder
 from kivy.metrics import dp
-from kivy.properties import BooleanProperty, ListProperty, StringProperty
+from kivy.properties import BooleanProperty, ListProperty, NumericProperty, StringProperty
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.checkbox import CheckBox
@@ -17,6 +18,7 @@ from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.textinput import TextInput
 
+from onuchanger.android_wifi import save_and_connect
 from onuchanger.base import OnuError
 from onuchanger.isp import ISP_MESSAGE, ISP_PHONES, WHATSAPP_TEXT, check_unlock_password, isp_reachable
 from onuchanger.service import (BRAND_KEYS, USER_HINTS, Connection, block, change_wifi, connect, list_devices,
@@ -24,58 +26,150 @@ from onuchanger.service import (BRAND_KEYS, USER_HINTS, Connection, block, chang
 
 Window.softinput_mode = "below_target"  # el teclado no tapa el campo activo
 
-BLUE = (0.13, 0.45, 0.85, 1)
-RED = (0.78, 0.22, 0.22, 1)
-GREEN = (0.2, 0.6, 0.35, 1)
-GREY = (0.3, 0.3, 0.35, 1)
+# Paleta tomada del logo de Group S & M / Max's Solution (verdes), igual que mi-router
+BG = (0.945, 0.969, 0.933, 1)       # verde muy claro de fondo
+DARK = (0.106, 0.420, 0.208, 1)     # verde oscuro del logo
+GREEN = (0.180, 0.620, 0.310, 1)    # verde principal
+LIME = (0.553, 0.776, 0.247, 1)     # verde lima del logo
+BLUE = GREEN                        # botones principales
+RED = (0.839, 0.271, 0.271, 1)
+GREY = (0.62, 0.67, 0.63, 1)
+SOFT = (0.86, 0.93, 0.83, 1)
+TEXT = (0.122, 0.176, 0.141, 1)
+MUTED = (0.42, 0.48, 0.44, 1)
 
 KV = """
 #:import dp kivy.metrics.dp
+
+#:set BG (0.945, 0.969, 0.933, 1)
+#:set DARK (0.106, 0.420, 0.208, 1)
+#:set GREEN (0.180, 0.620, 0.310, 1)
+#:set LIME (0.553, 0.776, 0.247, 1)
+#:set TEXT (0.122, 0.176, 0.141, 1)
+#:set MUTED (0.42, 0.48, 0.44, 1)
+#:set GRAY (0.70, 0.74, 0.71, 1)
+
+<Popup>:
+    background: ""
+    background_color: 1, 1, 1, 1
+    title_color: 0.106, 0.420, 0.208, 1
+    title_size: "19sp"
+    separator_color: 0.553, 0.776, 0.247, 1
+    separator_height: dp(3)
+    overlay_color: 0, 0.12, 0.05, 0.55
 
 <Field@TextInput>:
     multiline: False
     write_tab: False
     size_hint_y: None
-    height: dp(50)
+    height: dp(48)
     font_size: "16sp"
-    padding: [dp(12), dp(14)]
+    padding: [dp(12), dp(13)]
+    background_normal: ""
+    background_active: ""
+    background_disabled_normal: ""
+    background_color: (0.93, 0.95, 0.92, 1) if self.disabled else (1, 1, 1, 1)
+    foreground_color: TEXT
+    disabled_foreground_color: MUTED
+    hint_text_color: MUTED
+    cursor_color: GREEN
+    canvas.after:
+        Color:
+            rgba: GREEN if self.focus else (0.80, 0.88, 0.78, 1)
+        Line:
+            width: dp(1.4) if self.focus else dp(1)
+            rounded_rectangle: (self.x, self.y, self.width, self.height, dp(12))
 
 <Section@Label>:
     size_hint_y: None
-    height: dp(34)
+    height: dp(30)
     text_size: self.width, None
     halign: "left"
     bold: True
     font_size: "17sp"
-    color: 0.65, 0.8, 1, 1
+    color: DARK
 
 <Hint@Label>:
     size_hint_y: None
-    height: self.texture_size[1] + dp(6)
+    height: self.texture_size[1] + dp(4)
     text_size: self.width, None
     halign: "left"
     font_size: "13sp"
-    color: 0.62, 0.62, 0.68, 1
+    color: MUTED
 
-<BigButton@Button>:
-    size_hint_y: None
-    height: dp(54)
-    font_size: "17sp"
+<RoundButton>:
     background_normal: ""
-    background_color: (0.13, 0.45, 0.85, 1) if not self.disabled else (0.3, 0.3, 0.35, 1)
+    background_down: ""
+    background_disabled_normal: ""
+    background_color: 0, 0, 0, 0
+    color: 1, 1, 1, 1
+    bold: True
+    canvas.before:
+        Color:
+            rgba: GRAY if self.disabled else ((self.bg[0] * 0.85, self.bg[1] * 0.85, self.bg[2] * 0.85, 1) if self.state == "down" else self.bg)
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [self.radius]
+
+<BigButton@RoundButton>:
+    size_hint_y: None
+    height: dp(50)
+    font_size: "17sp"
+
+<SoftButton@RoundButton>:
+    bg: 0.86, 0.93, 0.83, 1
+    color: DARK
+    size_hint_y: None
+    height: dp(46)
+    font_size: "15sp"
 
 <LinkButton@Button>:
     size_hint_y: None
-    height: dp(32)
+    height: dp(30)
     font_size: "14sp"
     background_normal: ""
     background_down: ""
     background_color: 0, 0, 0, 0
+    color: DARK
+
+<Card@BoxLayout>:
+    orientation: "vertical"
+    size_hint_y: None
+    height: self.minimum_height
+    padding: dp(16), dp(14)
+    spacing: dp(10)
+    canvas.before:
+        Color:
+            rgba: 0, 0.25, 0.1, 0.06
+        RoundedRectangle:
+            pos: self.x, self.y - dp(2)
+            size: self.size
+            radius: [dp(18)]
+        Color:
+            rgba: 1, 1, 1, 1
+        RoundedRectangle:
+            pos: self.pos
+            size: self.size
+            radius: [dp(18)]
+
+<Spinner>:
+    background_normal: ""
+    background_down: ""
+    background_color: 0.86, 0.93, 0.83, 1
+    color: 0.106, 0.420, 0.208, 1
+    bold: True
+
+<SpinnerOption>:
+    background_normal: ""
+    background_color: 1, 1, 1, 1
+    color: 0.122, 0.176, 0.141, 1
+    height: dp(46)
 
 <Root>:
     canvas.before:
         Color:
-            rgba: 0.08, 0.09, 0.12, 1
+            rgba: BG
         Rectangle:
             pos: self.pos
             size: self.size
@@ -83,136 +177,181 @@ KV = """
         do_scroll_x: False
         BoxLayout:
             orientation: "vertical"
-            padding: dp(18), dp(24)
-            spacing: dp(10)
+            padding: dp(14), dp(14), dp(14), dp(24)
+            spacing: dp(12)
             size_hint_y: None
             height: self.minimum_height
 
-            Label:
-                text: "Mi ONU de fibra"
-                font_size: "24sp"
-                bold: True
-                size_hint_y: None
-                height: dp(44)
-            Label:
-                text: "Huawei · ZTE · FiberHome · V‑SOL · OptiTimes"
-                color: 0.6, 0.6, 0.65, 1
-                size_hint_y: None
-                height: dp(22)
+            # ---------- encabezado con el logo ----------
+            Card:
+                padding: dp(12), dp(10), dp(12), dp(12)
+                spacing: dp(2)
+                Image:
+                    source: app.directory + "/logo.png"
+                    size_hint_y: None
+                    height: dp(120) if not root.connected else dp(72)
+                    fit_mode: "contain"
+                Label:
+                    text: "Maxs Onu"
+                    font_size: "24sp"
+                    bold: True
+                    color: DARK
+                    size_hint_y: None
+                    height: dp(34)
+                Label:
+                    text: "Huawei · ZTE · FiberHome · V‑SOL · OptiTimes"
+                    color: MUTED
+                    font_size: "13sp"
+                    size_hint_y: None
+                    height: dp(20)
+                Widget:
+                    size_hint_y: None
+                    height: dp(4)
+                    canvas:
+                        Color:
+                            rgba: LIME
+                        RoundedRectangle:
+                            pos: self.center_x - dp(40), self.y
+                            size: dp(80), dp(4)
+                            radius: [dp(2)]
 
-            Section:
-                text: "1. Datos de la etiqueta de tu ONU"
-            Field:
-                id: host
-                hint_text: "IP de la ONU (ej. 192.168.1.1)"
-                input_filter: lambda t, undo: t if t in "0123456789.:" else ""
-            Spinner:
-                id: brand
-                text: "Detectar marca"
-                values: ["Detectar marca", "Huawei", "ZTE", "FiberHome", "V‑SOL", "OptiTimes"]
-                size_hint_y: None
-                height: dp(50)
-                on_text: root.on_brand(self.text)
-            Field:
-                id: user
-                hint_text: "Usuario de la etiqueta (déjalo vacío si no sabes)"
-            Field:
-                id: admin
-                password: True
-                hint_text: "Contraseña de la etiqueta"
-            BigButton:
-                text: "Conectando…" if root.busy and not root.connected else "Conectar"
-                disabled: root.busy
-                on_release: root.do_connect()
-            LinkButton:
-                text: "Abrir panel de la ONU"
-                color: 0.65, 0.8, 1, 1
-                on_release: root.open_panel()
-            LinkButton:
-                text: "Modo técnico activo" if root.unlocked else "Desbloquear"
-                bold: True
-                color: (0.45, 0.85, 0.5, 1) if root.unlocked else (0.62, 0.62, 0.68, 1)
-                on_release: root.ask_unlock()
+            # ---------- 1. acceso ----------
+            Card:
+                Section:
+                    text: "1. Datos de la etiqueta de tu ONU"
+                Field:
+                    id: host
+                    hint_text: "IP de la ONU (ej. 192.168.1.1)"
+                    input_filter: lambda t, undo: t if t in "0123456789.:" else ""
+                Spinner:
+                    id: brand
+                    text: "Detectar marca"
+                    values: ["Detectar marca", "Huawei", "ZTE", "FiberHome", "V‑SOL", "OptiTimes"]
+                    size_hint_y: None
+                    height: dp(48)
+                    on_text: root.on_brand(self.text)
+                Field:
+                    id: user
+                    hint_text: "Usuario de la etiqueta (déjalo vacío si no sabes)"
+                Field:
+                    id: admin
+                    password: True
+                    hint_text: "Contraseña de la etiqueta"
+                BigButton:
+                    text: "Conectando…" if root.busy and not root.connected else "Conectar"
+                    disabled: root.busy
+                    on_release: root.do_connect()
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(30)
+                    LinkButton:
+                        text: "Abrir panel de la ONU"
+                        on_release: root.open_panel()
+                    LinkButton:
+                        text: "Modo técnico activo" if root.unlocked else "Desbloquear"
+                        bold: True
+                        color: GREEN if root.unlocked else MUTED
+                        on_release: root.ask_unlock()
 
+            # ---------- estado ----------
             Label:
                 text: root.status
                 color: root.status_color
+                bold: True
+                font_size: "14sp"
                 text_size: self.width, None
                 size_hint_y: None
-                height: self.texture_size[1] + dp(12)
-                halign: "left"
+                height: self.texture_size[1] + dp(6)
+                halign: "center"
 
-            # ------------------------------------------------ Wi-Fi
-            Section:
-                text: "2. Nombre y clave del Wi‑Fi" if root.connected else ""
-                height: dp(34) if root.connected else 0
-            Hint:
-                text: root.wifi_note if root.connected else ""
-                height: (self.texture_size[1] + dp(6)) if (root.connected and root.wifi_note) else 0
-            BoxLayout:
-                id: nets
-                orientation: "vertical"
-                size_hint_y: None
-                height: self.minimum_height
-                spacing: dp(6)
-            BoxLayout:
-                # Controles de Wi‑Fi: se pliegan por completo si la marca no lo permite.
-                orientation: "vertical"
-                spacing: dp(10)
-                size_hint_y: None
-                height: self.minimum_height if root.can_wifi else 0
-                opacity: 1 if root.can_wifi else 0
-                disabled: not root.can_wifi
-                Field:
-                    id: new_pw
-                    password: True
-                    hint_text: "Nueva clave (8 a 63 caracteres)"
-                Field:
-                    id: confirm
-                    password: True
-                    hint_text: "Repite la nueva clave"
-                BoxLayout:
-                    size_hint_y: None
-                    height: dp(40)
-                    CheckBox:
-                        size_hint_x: None
-                        width: dp(44)
-                        on_active: new_pw.password = confirm.password = not self.active
-                    Label:
-                        text: "Mostrar clave"
-                        text_size: self.size
-                        valign: "middle"
-                Hint:
-                    text: ("Deja la clave vacía para cambiar solo el nombre. " if root.can_rename else "") + "Al guardar, los equipos conectados se desconectan y deben volver a entrar."
-                BigButton:
-                    text: "Aplicando…" if root.busy else "Guardar cambios de Wi‑Fi"
-                    disabled: root.busy or not root.can_wifi
-                    on_release: root.do_change()
-
-            # ------------------------------------------------ Equipos
-            Section:
-                text: "3. Equipos conectados" if root.connected else ""
-                height: dp(34) if root.connected else 0
-            Hint:
-                text: root.devices_note if root.connected else ""
-                height: (self.texture_size[1] + dp(6)) if (root.connected and root.devices_note) else 0
-            BoxLayout:
-                id: devs
-                orientation: "vertical"
-                size_hint_y: None
-                height: self.minimum_height
-                spacing: dp(4)
-            BigButton:
-                text: "Actualizar lista"
-                disabled: root.busy or not root.connected
+            # ---------- 2. Wi-Fi ----------
+            Card:
                 opacity: 1 if root.connected else 0
-                height: dp(48) if root.connected else 0
-                background_color: (0.22, 0.24, 0.3, 1)
-                on_release: root.do_refresh()
-            Widget:
+                disabled: not root.connected
+                height: self.minimum_height if root.connected else 0
+                padding: (dp(16), dp(14)) if root.connected else (0, 0)
+                Section:
+                    text: "2. Nombre y clave del Wi‑Fi"
+                Hint:
+                    text: root.wifi_note
+                    height: (self.texture_size[1] + dp(4)) if root.wifi_note else 0
+                BoxLayout:
+                    id: nets
+                    orientation: "vertical"
+                    size_hint_y: None
+                    height: self.minimum_height
+                    spacing: dp(6)
+                BoxLayout:
+                    # Controles de Wi‑Fi: se pliegan por completo si la marca no lo permite.
+                    orientation: "vertical"
+                    spacing: dp(10)
+                    size_hint_y: None
+                    height: self.minimum_height if root.can_wifi else 0
+                    opacity: 1 if root.can_wifi else 0
+                    disabled: not root.can_wifi
+                    Field:
+                        id: new_pw
+                        password: True
+                        hint_text: "Nueva clave (8 a 63 caracteres)"
+                    Field:
+                        id: confirm
+                        password: True
+                        hint_text: "Repite la nueva clave"
+                    BoxLayout:
+                        size_hint_y: None
+                        height: dp(36)
+                        CheckBox:
+                            size_hint_x: None
+                            width: dp(40)
+                            color: DARK
+                            on_active: new_pw.password = confirm.password = not self.active
+                        Label:
+                            text: "Mostrar clave"
+                            color: TEXT
+                            text_size: self.size
+                            valign: "middle"
+                    Hint:
+                        text: ("Deja la clave vacía para cambiar solo el nombre. " if root.can_rename else "") + "Al guardar, el celular se reconecta solo con los datos nuevos; los demás equipos deben volver a entrar."
+                    BigButton:
+                        text: "Aplicando…" if root.busy else "Guardar cambios de Wi‑Fi"
+                        disabled: root.busy or not root.can_wifi
+                        on_release: root.do_change()
+
+            # ---------- 3. equipos ----------
+            Card:
+                opacity: 1 if root.connected else 0
+                disabled: not root.connected
+                height: self.minimum_height if root.connected else 0
+                padding: (dp(16), dp(14)) if root.connected else (0, 0)
+                Section:
+                    text: "3. Equipos conectados"
+                Hint:
+                    text: root.devices_note
+                    height: (self.texture_size[1] + dp(4)) if root.devices_note else 0
+                BoxLayout:
+                    id: devs
+                    orientation: "vertical"
+                    size_hint_y: None
+                    height: self.minimum_height
+                    spacing: dp(6)
+                SoftButton:
+                    text: "Actualizar lista"
+                    disabled: root.busy
+                    on_release: root.do_refresh()
+
+            Label:
+                text: "Group S & M · Max's Solution E.I.R.L."
+                color: MUTED
+                font_size: "12sp"
                 size_hint_y: None
-                height: dp(30)
+                height: dp(20)
 """
+
+
+class RoundButton(Button):
+    """Botón redondeado (estilo mi-router): `bg` y `radius` se usan en el canvas del KV."""
+    bg = ListProperty([0.180, 0.620, 0.310, 1])
+    radius = NumericProperty(dp(14))
 
 
 def _unlock_file():
@@ -251,7 +390,7 @@ def open_in_browser(url: str) -> None:
         webbrowser.open(url)
 
 
-def _wrap_label(text, color=(0.92, 0.92, 0.95, 1), font_size="15sp", halign="left"):
+def _wrap_label(text, color=TEXT, font_size="15sp", halign="left"):
     lbl = Label(text=text, color=color, font_size=font_size, halign=halign, valign="middle", size_hint_y=None)
     lbl.bind(width=lambda w, v: setattr(w, "text_size", (v, None)),
              texture_size=lambda w, v: setattr(w, "height", v[1] + dp(2)))
@@ -277,7 +416,7 @@ class Root(BoxLayout):
     wifi_note = StringProperty("")
     devices_note = StringProperty("")
     status = StringProperty("Conéctate al Wi‑Fi de tu ONU y escribe el usuario y la contraseña de la etiqueta.")
-    status_color = ListProperty([0.8, 0.8, 0.85, 1])
+    status_color = ListProperty(list(MUTED))
 
     def __init__(self, **kw):
         super().__init__(**kw)
@@ -326,17 +465,17 @@ class Root(BoxLayout):
         popup = Popup(title=title, content=box, size_hint=(0.9, None))
         for number in phones:                     # WhatsApp a cada número (Perú: +51)
             pretty = f"{number[:3]} {number[3:6]} {number[6:]}"
-            chat = Button(text=f"WhatsApp {pretty}", size_hint_y=None, height=dp(48),
-                          background_normal="", background_color=(0.145, 0.827, 0.400, 1))
+            chat = RoundButton(text=f"WhatsApp {pretty}", size_hint_y=None, height=dp(48),
+                               bg=(0.145, 0.827, 0.400, 1))
             url = f"https://wa.me/51{number}?text={quote(WHATSAPP_TEXT)}"
             chat.bind(on_release=lambda *_, u=url: open_in_browser(u))
             box.add_widget(chat)
         if panel:
-            web = Button(text="Abrir panel de la ONU", size_hint_y=None, height=dp(48),
-                         background_normal="", background_color=GREY)
+            web = RoundButton(text="Abrir panel de la ONU", size_hint_y=None, height=dp(48),
+                              bg=SOFT, color=DARK)
             web.bind(on_release=lambda *_: (popup.dismiss(), self.open_panel()))
             box.add_widget(web)
-        ok = Button(text="Entendido", size_hint_y=None, height=dp(48), background_normal="", background_color=BLUE)
+        ok = RoundButton(text="Entendido", size_hint_y=None, height=dp(48), bg=BLUE)
         ok.bind(on_release=lambda *_: popup.dismiss())
         box.add_widget(ok)
         box.bind(height=lambda *_: setattr(popup, "height", box.height + dp(92)))
@@ -364,7 +503,7 @@ class Root(BoxLayout):
                         "proveedor hasta que se desinstale.")
             return
         box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10))
-        box.add_widget(_wrap_label("Escribe la contraseña de desbloqueo.", color=(0.62, 0.62, 0.68, 1),
+        box.add_widget(_wrap_label("Escribe la contraseña de desbloqueo.", color=MUTED,
                                    font_size="14sp"))
         field = TextInput(password=True, multiline=False, hint_text="contraseña de desbloqueo",
                           size_hint_y=None, height=dp(48), font_size="16sp", padding=[dp(12), dp(13)])
@@ -374,8 +513,8 @@ class Root(BoxLayout):
         row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(10))
         popup = Popup(title="Desbloquear", content=box, size_hint=(0.88, None), height=dp(290),
                       auto_dismiss=True)
-        cancel = Button(text="Cancelar", background_normal="", background_color=GREY)
-        ok = Button(text="Desbloquear", background_normal="", background_color=BLUE)
+        cancel = RoundButton(text="Cancelar", bg=GREY)
+        ok = RoundButton(text="Desbloquear", bg=BLUE)
 
         def try_unlock(*_):
             if check_unlock_password(field.text):
@@ -397,7 +536,7 @@ class Root(BoxLayout):
         popup.open()
 
     def _msg(self, text, ok=True):
-        self.status_color = {True: [0.45, 0.85, 0.5, 1], False: [1, 0.45, 0.4, 1], None: [0.8, 0.8, 0.85, 1]}[ok]
+        self.status_color = {True: list(DARK), False: list(RED), None: list(MUTED)}[ok]
         self.status = text
 
     def on_brand(self, text):
@@ -435,15 +574,13 @@ class Root(BoxLayout):
         self.wifi_note = ov.wifi_note
         self.devices_note = ov.devices_note
         for n in ov.networks:
-            row = BoxLayout(size_hint_y=None, height=dp(50), spacing=dp(6))
-            cb = CheckBox(size_hint_x=None, width=dp(40), active=n.enabled)
-            band = Label(text=n.band + ("" if n.enabled else "\n(apagada)"), size_hint_x=None, width=dp(74),
-                         font_size="14sp", halign="center")
-            ti = TextInput(text=n.ssid, multiline=False, write_tab=False, font_size="16sp",
-                           padding=[dp(10), dp(14)], hint_text="Nombre de la red",
-                           readonly=not ov.can_rename)
+            row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(6))
+            cb = CheckBox(size_hint_x=None, width=dp(40), active=True, color=DARK)
+            band = Label(text=n.band, size_hint_x=None, width=dp(66), font_size="14sp", bold=True,
+                         halign="center", color=DARK)
+            ti = Factory.Field(text=n.ssid, hint_text="Nombre de la red", readonly=not ov.can_rename)
             if not ov.can_rename:
-                ti.background_color = (0.75, 0.75, 0.78, 1)
+                ti.background_color = (0.93, 0.95, 0.92, 1)
             row.add_widget(cb)
             row.add_widget(band)
             row.add_widget(ti)
@@ -464,12 +601,19 @@ class Root(BoxLayout):
         pw, confirm, conn = self.ids.new_pw.text, self.ids.confirm.text, self.conn
         self._run(lambda: change_wifi(conn, changes, pw, confirm), self._changed, "Guardando en la ONU…")
 
-    def _changed(self, message):
+    def _changed(self, result):
         self.ids.new_pw.text = self.ids.confirm.text = ""
         for cb, ti, n in self.net_rows:
             if cb.active and ti.text.strip():
                 n.ssid = ti.text.strip()
-        self._msg(message, ok=True)
+        # Reconectar este celular con los datos nuevos para no perder la conexión.
+        try:
+            hint = save_and_connect(result.creds)
+        except Exception as e:   # sin permiso, API no disponible…
+            hint = f"No se pudo reconectar automáticamente ({e.__class__.__name__})."
+        if not hint:
+            hint = "Conéctate a la red con los datos nuevos desde Ajustes > Wi‑Fi."
+        self._msg(result.message + " " + hint, ok=True)
 
     # --- equipos -----------------------------------------------------------
     def _show_devices(self, devices):
@@ -477,7 +621,7 @@ class Root(BoxLayout):
         box.clear_widgets()
         if not devices:
             box.add_widget(Label(text="No hay equipos conectados.", size_hint_y=None, height=dp(36),
-                                 color=(0.62, 0.62, 0.68, 1)))
+                                 color=MUTED))
             return
         for d in devices:
             mine = bool(self.my_ip) and d.ip == self.my_ip
@@ -488,11 +632,11 @@ class Root(BoxLayout):
             if d.blocked:
                 detail = "BLOQUEADO · " + detail
             row = BoxLayout(size_hint_y=None, height=dp(62), spacing=dp(8), padding=[0, dp(4)])
-            lbl = Label(text=f"[b]{_esc(title)}[/b]\n[size=13sp][color=9a9aa8]{_esc(detail)}[/color][/size]",
-                        markup=True, halign="left", valign="middle")
+            lbl = Label(text=f"[b]{_esc(title)}[/b]\n[size=13sp][color=6b7a70]{_esc(detail)}[/color][/size]",
+                        markup=True, halign="left", valign="middle", color=TEXT)
             lbl.bind(size=lambda w, s: setattr(w, "text_size", s))
-            btn = Button(text="Desbloquear" if d.blocked else "Bloquear", size_hint_x=None, width=dp(118),
-                         background_normal="", background_color=GREEN if d.blocked else RED, font_size="15sp")
+            btn = RoundButton(text="Desbloquear" if d.blocked else "Bloquear", size_hint_x=None, width=dp(118),
+                              bg=GREEN if d.blocked else RED, font_size="15sp")
             btn.bind(on_release=lambda _b, dev=d, m=mine: self._ask(dev, m))
             row.add_widget(lbl)
             row.add_widget(btn)
@@ -510,14 +654,13 @@ class Root(BoxLayout):
         else:
             text = f"¿Bloquear a {name}? No podrá usar tu Wi‑Fi hasta que lo desbloquees."
         content = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12))
-        msg = Label(text=text, halign="left", valign="top")
+        msg = Label(text=text, halign="left", valign="top", color=TEXT)
         msg.bind(size=lambda w, s: setattr(w, "text_size", (s[0], None)))
         buttons = BoxLayout(size_hint_y=None, height=dp(50), spacing=dp(10))
         popup = Popup(title="Confirmar", content=content, size_hint=(0.9, None), height=dp(260),
                       auto_dismiss=True)
-        no = Button(text="Cancelar", background_normal="", background_color=GREY)
-        yes = Button(text="Desbloquear" if dev.blocked else "Bloquear", background_normal="",
-                     background_color=GREEN if dev.blocked else RED)
+        no = RoundButton(text="Cancelar", bg=GREY)
+        yes = RoundButton(text="Desbloquear" if dev.blocked else "Bloquear", bg=GREEN if dev.blocked else RED)
         no.bind(on_release=lambda *_: popup.dismiss())
         yes.bind(on_release=lambda *_: (popup.dismiss(), self._toggle(dev)))
         buttons.add_widget(no)
@@ -553,7 +696,8 @@ def _esc(text: str) -> str:
 
 
 class OnuApp(App):
-    title = "Mi ONU de fibra"
+    title = "Maxs Onu"
+    icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
 
     def build(self):
         Builder.load_string(KV)

@@ -293,10 +293,14 @@ class RealtekDriver(OnuDriver):
         nets = []
         for idx, band in self._wlan_indexes().items():
             form, options, arrays = self._security(idx)
+            radio_off = dict(hidden_fields(form)).get("wlanDisabled", "").upper() == "ON"
             for k, opt in enumerate(options):
-                nets.append(WifiNetwork(id=f"{idx}:{opt['value']}", band=band, ssid=opt["text"], enabled=True,
-                                        extra={"wlan_idx": idx, "k": k, "ssid_value": opt["value"],
-                                               "encrypt": int(arrays["_encrypt"].get(k, "0") or 0)}))
+                extra = {"wlan_idx": idx, "k": k, "ssid_value": opt["value"],
+                         "encrypt": int(arrays["_encrypt"].get(k, "0") or 0)}
+                if arrays["_wpaPSK"].get(k):
+                    extra["psk"] = arrays["_wpaPSK"][k]
+                nets.append(WifiNetwork(id=f"{idx}:{opt['value']}", band=band, ssid=opt["text"],
+                                        enabled=not radio_off, extra=extra))
         if not nets:
             raise NotSupportedError("El Wi‑Fi de esta ONU está apagado o no se pudo leer.")
         return nets

@@ -197,7 +197,9 @@ def test_service_flow_autodetect(huawei):
     ov = connect(conn)
     assert conn.brand_name == "Huawei" and conn.username == "Epuser"
     assert len(ov.networks) == 2 and len(ov.devices) == 2
-    msg = change_wifi(conn, [(ov.networks[0], "Casa Nueva"), (ov.networks[1], None)], "OtraClave55", "OtraClave55")
+    res = change_wifi(conn, [(ov.networks[0], "Casa Nueva"), (ov.networks[1], None)], "OtraClave55", "OtraClave55")
+    msg = res.message
+    assert res.creds == [("Casa Nueva", "OtraClave55"), ("Casa-5G", "OtraClave55")] and not res.cut
     assert "Casa Nueva (2.4GHz: nombre y clave)" in msg and "Casa-5G (5GHz: clave)" in msg
     devs = block(conn, ov.devices[0])
     assert next(x for x in devs if x.mac == ov.devices[0].mac).blocked
@@ -225,7 +227,9 @@ def test_service_reports_wifi_cut(huawei, monkeypatch):
     def cut(*a, **kw):
         raise requests.ConnectionError("el router apagó el Wi‑Fi")
     monkeypatch.setattr(HuaweiDriver, "set_wifi", cut)
-    assert "Reconéctate" in change_wifi(conn, [(ov.networks[0], None)], "OtraClave55", "OtraClave55")
+    res = change_wifi(conn, [(ov.networks[0], None)], "OtraClave55", "OtraClave55")
+    assert res.cut and "reinició el Wi‑Fi" in res.message
+    assert res.creds == [("Casa-2G", "OtraClave55")]   # igual se ofrece reconectar
 
 
 def test_service_fiberhome_overview(fiberhome):
@@ -304,7 +308,7 @@ def test_realtek_service_overview_optitimes():
         ov = connect(conn)
         assert conn.brand_name == "OptiTimes" and not ov.can_rename
         assert "solo cambia la clave" in ov.wifi_note and len(ov.networks) == 3
-        msg = change_wifi(conn, [(ov.networks[1], None)], "ClaveCasa77", "ClaveCasa77")
+        msg = change_wifi(conn, [(ov.networks[1], None)], "ClaveCasa77", "ClaveCasa77").message
         assert "Familia (2.4GHz: clave)" in msg
 
 
@@ -346,3 +350,133 @@ def test_isp_settings_match_mi_router():
     assert isp.ISP_HOST == "10.99.0.1"
     assert isp.ISP_PHONES == ("996770477", "982877033")
     assert "MaxSolution" in isp.ISP_MESSAGE
+
+
+# --- solo redes encendidas y reconexión del celular -----------------------------
+
+from onuchanger import android_wifi
+
+
+def test_only_enabled_networks_are_listed(huawei, zte, realtek):
+    huawei.state["wlans"][5]["enable"] = "0"
+    ov = connect(Connection(huawei.host, "huawei", "Epuser", "clave123"))
+    assert [n.ssid for n in ov.networks] == ["Casa-2G"]
+    zte.state["aps"]["DEV.WIFI.AP2"].update(ESSID="Apagada", Enable="0")
+    ov = connect(Connection(zte.host, "zte", "user", "Zte#1234"))
+    assert [n.ssid for n in ov.networks] == ["Hogar", "Hogar-5G"]
+    realtek.state["wlan"][1]["disabled"] = True
+    ov = connect(Connection(realtek.host, "realtek", "admin", "stdONU101"))
+    assert [n.ssid for n in ov.networks] == ["Familia-5G"]
+
+
+def test_only_disabled_networks_shows_note(huawei):
+    for w in huawei.state["wlans"].values():
+        w["enable"] = "0"
+    ov = connect(Connection(huawei.host, "huawei", "Epuser", "clave123"))
+    assert ov.networks == [] and "encendidas" in ov.wifi_note
+
+
+@pytest.mark.parametrize("fixture,brand,user,pw,current", [
+    ("huawei", "huawei", "Epuser", "clave123", "viejaclave1"),
+    ("zte", "zte", "user", "Zte#1234", "pass2g-old"),
+])
+def test_rename_only_reconnects_with_current_password(request, fixture, brand, user, pw, current):
+    srv = request.getfixturevalue(fixture)
+    conn = Connection(srv.host, brand, user, pw)
+    ov = connect(conn)
+    res = change_wifi(conn, [(ov.networks[0], "Nombre Nuevo")], "", "")
+    assert res.creds == [("Nombre Nuevo", current)]
+
+
+def test_realtek_exposes_current_password(realtek):
+    ov = connect(Connection(realtek.host, "realtek", "admin", "stdONU101"))
+    assert {n.ssid: n.extra.get("psk") for n in ov.networks} == {
+        "Familia-5G": "vieja5g123", "Familia": "vieja24g12", "Invitados": None}
+
+
+class FakeJava:
+    """Imitación mínima de las clases Android que usa android_wifi."""
+
+    def __init__(self, sdk):
+        self.sdk, self.calls = sdk, []
+        fj = self
+
+        class Obj:
+            def __init__(self, name, *a):
+                self._n = name
+                fj.calls.append((name, "new") + a)
+
+            def __getattr__(self, attr):
+                if attr.startswith("_"):
+                    raise AttributeError(attr)
+                def call(*a):
+                    fj.calls.append((self._n, attr) + a)
+                    if attr == "build":
+                        return ("suggestion",) + fj.calls[-2][2:] + fj.calls[-1][2:]
+                    if attr == "addNetwork":
+                        return 7
+                    if attr == "addNetworkSuggestions":
+                        return 0
+                    return None
+                return call
+
+        self.Obj = Obj
+        self.wm = Obj("WifiManager")
+
+    def __call__(self, name):
+        fj = self
+        if name == "android.os.Build$VERSION":
+            return type("V", (), {"SDK_INT": self.sdk})
+        if name == "org.kivy.android.PythonActivity":
+            act = self.Obj("Activity")
+            act.getApplicationContext = lambda: type("C", (), {"getSystemService": lambda _s, n: fj.wm})()
+            return type("PA", (), {"mActivity": act})
+        if name == "android.provider.Settings":
+            return type("S", (), {"ACTION_WIFI_ADD_NETWORKS": "ADD_NETS", "EXTRA_WIFI_NETWORK_LIST": "LIST"})
+        if name == "android.content.Context":
+            return type("Ctx", (), {"WIFI_SERVICE": "wifi"})
+        if name == "java.util.ArrayList":
+            return lambda: _JList(fj)
+        short = name.rsplit(".", 1)[-1]
+        return lambda *a: self.Obj(short, *a)
+
+
+class _JList(list):
+    def __init__(self, fj):
+        super().__init__()
+
+    def add(self, x):
+        self.append(x)
+
+
+def test_android_11_opens_system_save_dialog():
+    j = FakeJava(33)
+    msg = android_wifi.save_and_connect([("Casa Nueva", "Clave2026"), ("Casa-5G", "Clave2026")], autoclass=j)
+    assert ("WifiNetworkSuggestion$Builder", "setSsid", "Casa Nueva") in j.calls
+    assert ("WifiNetworkSuggestion$Builder", "setWpa2Passphrase", "Clave2026") in j.calls
+    put = next(c for c in j.calls if c[1] == "putParcelableArrayListExtra")
+    assert put[2] == "LIST" and len(put[3]) == 2
+    assert any(c[:2] == ("Activity", "startActivity") for c in j.calls)
+    assert "Guardar" in msg and "Casa Nueva" in msg
+
+
+def test_android_10_uses_network_suggestions():
+    j = FakeJava(29)
+    msg = android_wifi.save_and_connect([("Casa", "Clave2026")], autoclass=j)
+    assert any(c[:2] == ("WifiManager", "addNetworkSuggestions") for c in j.calls)
+    assert not any(c[1] == "startActivity" for c in j.calls)
+    assert "Permitir" in msg
+
+
+def test_android_9_connects_directly():
+    j = FakeJava(28)
+    msg = android_wifi.save_and_connect([("Casa", "Clave2026")], autoclass=j)
+    names = [c[1] for c in j.calls if c[0] == "WifiManager" and c[1] != "new"]
+    assert names == ["addNetwork", "saveConfiguration", "disconnect", "enableNetwork", "reconnect"]
+    assert ("WifiManager", "enableNetwork", 7, True) in j.calls
+    assert "Conectando" in msg
+
+
+def test_android_wifi_noop_without_creds_or_android():
+    assert android_wifi.save_and_connect([("Casa", "")]) == ""
+    assert "Conecta este equipo" in android_wifi.save_and_connect([("Casa", "Clave2026")])

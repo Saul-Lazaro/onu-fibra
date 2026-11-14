@@ -489,7 +489,7 @@ function on_submit(){{ with(document.forms[0]){{ username.value=username1.value;
             return self.send(f"""<html><script>var _encrypt=new Array();
 {arrays}ssid_num={len(w['ssids'])};</script>
 <form action=/boaform/admin/formWlEncrypt method=POST name="formEncrypt">
-<input type=hidden name="wlanDisabled" value=OFF><input type=hidden name="isNmode" value=0>
+<input type=hidden name="wlanDisabled" value={"ON" if w.get("disabled") else "OFF"}><input type=hidden name="isNmode" value=0>
 <select name=wpaSSID>{opts}</select><select id="security_method" name="security_method"></select>
 <input type="hidden" name="wepEnabled" value="ON" checked>
 <input name="wpaAuth" type="radio" value="psk"><input type="checkbox" name="wpa2ciphersuite_a" value=1>

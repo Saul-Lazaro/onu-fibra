@@ -1,11 +1,15 @@
 [app]
-title = Mi ONU de fibra
+title = Maxs Onu
 package.name = onufibra
 package.domain = com.onuchanger
 source.dir = .
-source.include_exts = py
+source.include_exts = py,png
 source.exclude_dirs = tests, bin, .buildozer, .github, .git, __pycache__
-version = 0.1.0
+version = 0.2.0
+
+icon.filename = %(source.dir)s/icon.png
+presplash.filename = %(source.dir)s/presplash.png
+android.presplash_color = #FFFFFF
 
 # Dependencias que python-for-android empaqueta dentro del APK.
 # pycryptodome (receta nativa en p4a): login FiberHome, clave Wi‑Fi cifrada y firma Check de ZTE.
@@ -15,7 +19,8 @@ orientation = portrait
 fullscreen = 0
 
 # INTERNET: hablar con la ONU. ACCESS_WIFI_STATE: leer la IP del gateway.
-android.permissions = INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE
+# CHANGE_WIFI_STATE: guardar la red con el nombre/clave nuevos y reconectar el celular.
+android.permissions = INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE, CHANGE_WIFI_STATE
 android.api = 36
 android.minapi = 24
 android.ndk = 28c

@@ -302,13 +302,20 @@ class ZteDriver(OnuDriver):
         return self._data(SSID_TAG)
 
     def get_wifi_networks(self) -> list[WifiNetwork]:
-        objs, _ = self._ssid_conf()
+        objs, encode = self._ssid_conf()
+        token = self.tmp_token
+        psks = {p.get("_InstID", "").rsplit(".PSK", 1)[0]: p.get("KeyPassphrase", "")
+                for p in objs.get("OBJ_WLANPSK_ID", [])}
         nets = []
         for ap in objs.get("OBJ_WLANAP_ID", []):
             if not ap.get("_InstID"):
                 continue
+            psk = psks.get(ap["_InstID"], "")
+            if psk and "KeyPassphrase" in encode:
+                psk = aes_decrypt(psk, token, token[::-1])
             nets.append(WifiNetwork(id=ap["_InstID"], band=_band(ap), ssid=ap.get("ESSID", ""),
-                                    enabled=ap.get("Enable") == "1"))
+                                    enabled=ap.get("Enable") == "1",
+                                    extra={"psk": psk} if _uses_psk(ap) and psk else {}))
         if not nets:
             raise NotSupportedError("No se encontró la configuración Wi‑Fi en esta ONU ZTE.")
         return [n for n in nets if n.ssid or n.enabled]

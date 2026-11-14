@@ -1,4 +1,6 @@
-# Mi ONU de fibra — app Android para Huawei, ZTE, FiberHome, V‑SOL y OptiTimes
+# Maxs Onu — app Android para ONUs Huawei, ZTE, FiberHome, V‑SOL y OptiTimes
+
+App de Group S & M · Max's Solution E.I.R.L., con su logo y colores (mismo estilo que mi-router).
 
 App para que el cliente, conectado al Wi‑Fi de su ONU y con el **usuario y la
 contraseña de la etiqueta**, pueda:
@@ -28,8 +30,13 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
 1. Conéctate al Wi‑Fi de la ONU y abre la app: la IP se rellena sola.
 2. Escribe usuario y contraseña de la etiqueta (si dejas el usuario vacío se usa
    el típico de la marca: Huawei `Epuser`, ZTE `user`, FiberHome `user`). **Conectar**.
-3. **Wi‑Fi**: marca las redes, edita el nombre y/o escribe la clave nueva → *Guardar*.
-   Si el teléfono estaba en esa red se desconecta: reconéctate con los datos nuevos.
+3. **Wi‑Fi**: solo aparecen las redes **encendidas**. Marca las redes, edita el nombre
+   y/o escribe la clave nueva → *Guardar*.
+   **El celular se reconecta solo** con el nombre y la clave nuevos:
+   - Android 11 o superior: aparece el aviso del sistema «¿Guardar red?» → *Guardar*.
+   - Android 10: la primera vez, una notificación pide *Permitir* redes sugeridas.
+   - Android 9 o menos: se conecta directamente.
+   Si solo cambias el nombre, la app usa la clave actual que lee de la ONU.
 4. **Equipos**: *Bloquear* / *Desbloquear*. La app marca "(este teléfono)" para
    que el cliente no se bloquee a sí mismo.
 
