@@ -407,3 +407,220 @@ class FiberhomeHandler(Base):
                 st["enable"], st["mode"] = f["ipv4_mac_filter_enable"], f["ipv4_mac_filter_mode"]
             return self.j({"session_valid": 1})
         return self.send("nf", 404)
+
+
+# =========================================================================
+# Realtek "boa" (V-SOL / OptiTimes): reproduce el SDK y una página de producción
+# =========================================================================
+
+def realtek_state(brand="V-SOL"):
+    return {
+        "brand": brand, "user": "admin", "password": "stdONU101",
+        "logged": False, "csrf": None, "code": None, "idx": 0, "fails": 0,
+        # wlan_idx 0 = 5 GHz y 1 = 2.4 GHz, como muchos RTL9607C con radio externa
+        "wlan": {
+            0: {"band": "2", "ssids": [{"ssid": "Familia-5G", "encrypt": 4, "u": 0, "u2": 2, "psk": "vieja5g123",
+                                        "dot11w": 1, "sha": 1, "rekey": "86400"}],
+                "ac_mode": 0, "ac": [], "clients": ["a4:c1:38:00:00:05"]},
+            1: {"band": "1", "ssids": [{"ssid": "Familia", "encrypt": 6, "u": 3, "u2": 3, "psk": "vieja24g12",
+                                        "dot11w": 0, "sha": 0, "rekey": "86400"},
+                                       {"ssid": "Invitados", "encrypt": 0, "u": 0, "u2": 0, "psk": "",
+                                        "dot11w": 0, "sha": 0, "rekey": "0"}],
+                "ac_mode": 0, "ac": [], "clients": ["a4:c1:38:00:00:24", "a4:c1:38:00:00:25"]},
+        },
+        "log": [],
+    }
+
+
+class RealtekHandler(Base):
+    def csrf_input(self):
+        self.state["csrf"] = "%08x" % random.getrandbits(32)
+        return f'<input type="hidden" name="csrftoken" value="{self.state["csrf"]}">'
+
+    def login_page(self):
+        st = self.state
+        st["code"] = str(random.randint(1000, 9999))
+        return self.send(f"""<html><head><title>{st['brand']} XPON ONU</title><script>
+function on_submit(){{ with(document.forms[0]){{ username.value=username1.value; psd.value=psd1.value; submit(); }} }}
+</script></head><body><form action=/boaform/admin/formLogin method=POST name="cmlogin">
+<input type="text" name="username1" id="username1"><input type="password" name="psd1" id="psd1">
+<input type="text" name="verification_code"><input type="hidden" id="check_code" value="{st['code']}">
+<input name="button" type="button" onClick="on_submit();" value="Login">
+<input type="hidden" name="username" id="username" value=''>
+<input type="hidden" name="psd" id="psd" value=''>
+<input type="hidden" name="sec_lang" value='0'>
+{self.csrf_input()}</form></body></html>""")
+
+    def do_GET(self):
+        st = self.state
+        p = urlsplit(self.path)
+        q = dict(parse_qsl(p.query))
+        if p.path in ("/", "/admin/login.asp"):
+            if not st["logged"]:
+                return self.login_page()
+            return self.send("<html><frameset><frame src=/admin/top.asp></frameset></html>")
+        if not st["logged"]:
+            return self.login_page()
+        if p.path == "/boaform/admin/formWlanRedirect":
+            idx = int(q["wlan_idx"])
+            if idx in st["wlan"]:
+                st["idx"] = idx
+            self.send_response(302)
+            self.send_header("Location", q["redirect-url"])
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        w = st["wlan"][st["idx"]]
+        if p.path == "/admin/wlbasic.asp":
+            return self.send(f"""<html><form action=/boaform/admin/formWlanSetup method=POST name="wlanSetup">
+<input type="checkbox" name="wlanDisabled" value=OFF><select size=1 name=band></select>
+<input type=text name=ssid value="{w['ssids'][0]['ssid']}"><input type='checkbox' name='wlHide' value=0>
+<input type="hidden" value="/admin/wlbasic.asp" name="submit-url"><input type="hidden" name="basicrates" value=0>
+<input type="hidden" name="wlan_idx" value={st['idx']}><input type="hidden" name="Band2G5GSupport" value={w['band']}>
+{self.csrf_input()}</form></html>""")
+        if p.path == "/admin/wlwpa.asp":
+            arrays = "".join(
+                f"_wlan_mode[{k}]=0;\n\t_encrypt[{k}]={s['encrypt']};\n\t_enable1X[{k}]=0;\n\t_wpaAuth[{k}]=2;\n"
+                f"\t_wpaPSKFormat[{k}]=0;\n\t_wpaPSK[{k}]='{s['psk']}';\n\t_wpaGroupRekeyTime[{k}]='{s['rekey']}';\n"
+                f"\t_uCipher[{k}]={s['u']};\n\t_wpa2uCipher[{k}]={s['u2']};\n\t_wlan_isNmode[{k}]=1;\n"
+                f"\t_dotIEEE80211W[{k}]={s['dot11w']};\n\t_sha256[{k}]={s['sha']};\n"
+                for k, s in enumerate(w["ssids"]))
+            opts = "".join(f'<option value="{i}">{s["ssid"]}</option>' for i, s in enumerate(w["ssids"]))
+            return self.send(f"""<html><script>var _encrypt=new Array();
+{arrays}ssid_num={len(w['ssids'])};</script>
+<form action=/boaform/admin/formWlEncrypt method=POST name="formEncrypt">
+<input type=hidden name="wlanDisabled" value=OFF><input type=hidden name="isNmode" value=0>
+<select name=wpaSSID>{opts}</select><select id="security_method" name="security_method"></select>
+<input type="hidden" name="wepEnabled" value="ON" checked>
+<input name="wpaAuth" type="radio" value="psk"><input type="checkbox" name="wpa2ciphersuite_a" value=1>
+<input type="password" name="pskValue" value=""><input id="radius_ip" name="radiusIP" value="0.0.0.0">
+<input type="hidden" value="/admin/wlwpa.asp" name="submit-url">
+<input type="hidden" name="wlan_idx" value={st['idx']}>{self.csrf_input()}</form></html>""")
+        if p.path == "/boaform/admin/formWirelessTbl":
+            idx = int(q.get("wlan_idx", st["idx"]))
+            rows = "".join(f"<tr bgcolor=#b7b7b7><td><font size=2>{m}</td><td><font size=2>10</td></tr>"
+                           for m in st["wlan"][idx]["clients"]) or \
+                "<tr bgcolor=#b7b7b7><td><font size=2>None</td><td><font size=2>---</td></tr>"
+            return self.send(f"<html><form action=/boaform/admin/formWirelessTbl><table>{rows}</table></form></html>")
+        if p.path == "/admin/wlactrl.asp":
+            rows = "".join(f'<tr><td align=center width="45%" bgcolor="#C0C0C0"><font size="2">{m}</td>\n'
+                           f'<td align=center width="20%" bgcolor="#C0C0C0"><input type="checkbox" name="select{n}" '
+                           f'value="ON"></td></tr>\n' for n, m in w["ac"])
+            return self.send(f"""<html><form action=/boaform/admin/formWlAc method=POST name="formWlAcAdd">
+<select size="1" name="wlanAcEnabled"><option value=0 >Disabled</option><option value=1 selected >Allow</option>
+<option value=2 >Deny</option></select><input type="submit" value="Apply" name="setFilterMode">
+<input type="text" name="mac" size="15" maxlength="12"><input type="submit" value="Add" name="addFilterMac">
+<input type="hidden" value="/admin/wlactrl.asp" name="submit-url"><input type="hidden" name="wlan_idx" value={st['idx']}>
+{self.csrf_input()}</form>
+<form action=/boaform/admin/formWlAc method=POST name="formWlAcDel"><table>{rows}</table>
+<input type="submit" value="Delete Selected" name="deleteSelFilterMac">
+<input type="submit" value="Delete All" name="deleteAllFilterMac">
+<input type="hidden" value="/admin/wlactrl.asp" name="submit-url"><input type="hidden" name="wlan_idx" value={st['idx']}>
+<input type="hidden" name="csrftoken" value="{st['csrf']}"></form>
+<script>document.formWlAcAdd.wlanAcEnabled.selectedIndex={w['ac_mode']}
+</script></html>""")
+        if p.path == "/admin/top.asp":
+            return self.send(f"<html><form action=/boaform/admin/formLogout method=POST>{self.csrf_input()}</form></html>")
+        return self.send("nf", 404)
+
+    def err(self, msg):
+        return self.send(f"<html><body><h4>ERROR: {msg}</h4><form><input type=button value=OK></form></body></html>")
+
+    def ok(self, url):
+        return self.send("<html><head><script>/* change setting successfully */</script></head><body>"
+                         + "Change setting successfully!" + " " * 5000
+                         + f"<form action={url}><input type=submit value=OK></form></body></html>")
+
+    def do_POST(self):
+        st = self.state
+        p = urlsplit(self.path)
+        form = parse_qsl(self.body(), keep_blank_values=True)
+        f = dict(form)
+        if p.path == "/boaform/admin/formLogin":
+            ok = (f.get("username") == st["user"] and f.get("psd") == st["password"]
+                  and f.get("verification_code") == st["code"] and f.get("csrftoken") == st["csrf"])
+            if not ok:
+                st["fails"] += 1
+                return self.login_page()
+            st["logged"] = True
+            return self.send("<html><script>top.location='/';</script></html>")
+        if not st["logged"]:
+            return self.login_page()
+        if f.get("csrftoken") != st["csrf"]:
+            return self.err("csrf token invalid")
+        if p.path == "/boaform/admin/formLogout":
+            st["logged"] = False
+            return self.send("bye")
+        st["log"].append((p.path, form))
+        idx = int(f.get("wlan_idx", st["idx"]))
+        w = st["wlan"][idx]
+        if p.path == "/boaform/admin/formWlEncrypt":
+            # Lógica de fmwlan.c (SDK Realtek)
+            if not f.get("wpaSSID"):
+                return self.err("No SSID type")
+            s = w["ssids"][int(f["wpaSSID"])]
+            if not f.get("security_method"):
+                return self.err("No encryption")
+            enc = int(f["security_method"])
+            s["encrypt"] = enc
+            if enc in (2, 6):
+                v = 0
+                if f.get("ciphersuite_t"):
+                    v |= 1 if f["ciphersuite_t"] == "1" else 0
+                    v |= 2 if f.get("ciphersuite_a") == "1" else 0
+                    v = v or 1
+                elif enc == 6:
+                    v = 3
+                s["u"] = v
+            else:
+                s["u"] = 0
+            if enc in (4, 6):
+                v = 0
+                if f.get("wpa2ciphersuite_t"):
+                    v |= 1 if f["wpa2ciphersuite_t"] == "1" else 0
+                    v |= 2 if f.get("wpa2ciphersuite_a") == "1" else 0
+                    v = v or 2
+                elif enc == 6:
+                    v = 3
+                elif enc == 4:
+                    v = 2
+                s["u2"] = v
+            else:
+                s["u2"] = 0
+            if enc == 4:
+                if not f.get("dotIEEE80211W"):
+                    return self.err("80211w")
+                s["dot11w"] = int(f["dotIEEE80211W"])
+                if s["dot11w"] == 1:
+                    if not f.get("sha256"):
+                        return self.err("sha256")
+                    s["sha"] = int(f["sha256"])
+            if f.get("wpaAuth") == "psk":
+                if not f.get("pskFormat"):
+                    return self.err("No PSK format")
+                if not 0 < len(f.get("pskValue", "")) < 64:
+                    return self.err("Invalid PSK value")
+                s["psk"] = f["pskValue"]
+            if f.get("gk_rekey"):
+                s["rekey"] = f["gk_rekey"]
+            return self.ok(f.get("submit-url", "/"))
+        if p.path == "/boaform/admin/formWlAc":
+            if f.get("setFilterMode"):
+                w["ac_mode"] = int(f["wlanAcEnabled"][0])
+                return self.ok("/admin/wlactrl.asp")
+            if f.get("addFilterMac"):
+                mac = f.get("mac", "")
+                if len(mac) != 12:
+                    return self.err("Invalid MAC address")
+                mac = ":".join(mac[i:i + 2] for i in range(0, 12, 2)).lower()
+                if any(m == mac for _, m in w["ac"]):
+                    return self.err("Entry already exists")
+                nxt = max([n for _, wl in st["wlan"].items() for n, _ in wl["ac"]] or [-1]) + 1
+                w["ac"].append((nxt, mac))
+            if f.get("deleteSelFilterMac"):
+                before = len(w["ac"])
+                w["ac"] = [(n, m) for n, m in w["ac"] if f.get(f"select{n}") != "ON"]
+                if len(w["ac"]) == before:
+                    return self.err("There is no item selected to delete!")
+            return self.ok("/admin/wlactrl.asp")
+        return self.send("nf", 404)

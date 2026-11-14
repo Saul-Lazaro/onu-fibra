@@ -120,6 +120,7 @@ class OnuDriver(ABC):
     default_username: str = "admin"
     # Qué sabe hacer este driver: la interfaz oculta lo que no esté.
     can_change_wifi: bool = True
+    can_rename_wifi: bool = True
     can_block: bool = True
 
     def __init__(self, host: str, username: str, password: str, timeout: int = 15):

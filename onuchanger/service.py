@@ -10,11 +10,13 @@ from .base import (Device, NotSupportedError, OnuError, WifiNetwork, normalize_m
                    validate_wifi_password)
 from .detect import DRIVERS, default_gateway, get_driver
 
-BRAND_KEYS = {"Detectar marca": None, "Huawei": "huawei", "ZTE": "zte", "FiberHome": "fiberhome"}
+BRAND_KEYS = {"Detectar marca": None, "Huawei": "huawei", "ZTE": "zte", "FiberHome": "fiberhome",
+              "V‑SOL": "realtek", "OptiTimes": "realtek"}
 USER_HINTS = {
     "huawei": "Usuario de la etiqueta (p. ej. Epuser, root)",
     "zte": "Usuario de la etiqueta (p. ej. user, admin)",
     "fiberhome": "Usuario de la etiqueta (p. ej. user, admin)",
+    "realtek": "Usuario de la etiqueta (p. ej. admin, user)",
 }
 
 CUT_MSG = ("La ONU cortó el Wi‑Fi al aplicar el cambio (es normal si este teléfono estaba en esa red). "
@@ -36,6 +38,7 @@ class Overview:
     wifi_note: str = ""            # por qué no se puede cambiar el Wi‑Fi (si aplica)
     devices: list[Device] = field(default_factory=list)
     devices_note: str = ""
+    can_rename: bool = True        # False: solo se puede cambiar la clave
 
 
 def suggest_host() -> str:
@@ -63,11 +66,16 @@ def connect(conn: Connection) -> Overview:
     d = _driver(conn)
     ov = Overview()
     with d:
+        conn.brand_name = d.brand   # algunos drivers afinan la marca al iniciar sesión
+        ov.can_rename = d.can_rename_wifi
         if d.can_change_wifi:
             try:
                 ov.networks = d.get_wifi_networks()
             except NotSupportedError as e:
                 ov.wifi_note = str(e)
+            if ov.networks and not d.can_rename_wifi:
+                ov.wifi_note = (f"En {d.brand} la app por ahora solo cambia la clave; el nombre de la red "
+                                "se cambia desde el panel web.")
         else:
             ov.wifi_note = (f"Cambiar el nombre y la clave del Wi‑Fi aún no está disponible para {d.brand}. "
                             "Puedes ver y bloquear equipos.")

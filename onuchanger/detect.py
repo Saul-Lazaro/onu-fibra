@@ -14,6 +14,7 @@ import urllib3
 from .base import OnuDriver, OnuError
 from .drivers.fiberhome import FiberhomeDriver
 from .drivers.huawei import HuaweiDriver
+from .drivers.realtek import RealtekDriver
 from .drivers.zte import ZteDriver
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -22,6 +23,7 @@ DRIVERS: dict[str, type[OnuDriver]] = {
     "huawei": HuaweiDriver,
     "zte": ZteDriver,
     "fiberhome": FiberhomeDriver,
+    "realtek": RealtekDriver,   # V‑SOL, OptiTimes y otras con panel Realtek "boa"
 }
 
 
@@ -87,7 +89,7 @@ def detect_brand(host: str, timeout: int = 6) -> str | None:
                 html += s.get(url + "/" + m.group(1).lstrip("/"), timeout=timeout).text
             except requests.RequestException:
                 pass
-    for key in ("zte", "huawei", "fiberhome"):
+    for key in ("zte", "huawei", "fiberhome", "realtek"):
         if DRIVERS[key].matches(html, dict(r.headers)):
             return key
     for key in ("zte", "fiberhome"):
@@ -103,5 +105,5 @@ def get_driver(host: str | None, username: str, password: str, brand: str | None
     brand = brand or detect_brand(host)
     if brand not in DRIVERS:
         raise OnuError(f"No se reconoció la marca de la ONU en {host}. Elige la marca manualmente "
-                       "(Huawei, ZTE o FiberHome).")
+                       "(Huawei, ZTE, FiberHome, V‑SOL u OptiTimes).")
     return DRIVERS[brand](host, username, password)

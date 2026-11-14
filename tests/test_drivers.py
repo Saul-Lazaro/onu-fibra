@@ -8,8 +8,9 @@ from onuchanger.drivers.huawei import HuaweiDriver
 from onuchanger.drivers.zte import ZteDriver
 from onuchanger.service import Connection, block, change_wifi, connect, unblock
 
-from fakes import (FakeServer, FiberhomeHandler, HuaweiHandler, ZteHandler, fiberhome_state, huawei_state,
-                   zte_state)
+from fakes import (FakeServer, FiberhomeHandler, HuaweiHandler, RealtekHandler, ZteHandler, fiberhome_state,
+                   huawei_state, realtek_state, zte_state)
+from onuchanger.drivers.realtek import RealtekDriver
 
 
 @pytest.fixture
@@ -21,6 +22,12 @@ def huawei():
 @pytest.fixture
 def zte():
     with FakeServer(ZteHandler, zte_state()) as s:
+        yield s
+
+
+@pytest.fixture
+def realtek():
+    with FakeServer(RealtekHandler, realtek_state()) as s:
         yield s
 
 
@@ -52,10 +59,11 @@ def test_js_constructors_decodes_and_handles_parens():
 
 # --- detección ---------------------------------------------------------------
 
-def test_detect_brand(huawei, zte, fiberhome):
+def test_detect_brand(huawei, zte, fiberhome, realtek):
     assert detect_brand(huawei.host) == "huawei"
     assert detect_brand(zte.host) == "zte"
     assert detect_brand(fiberhome.host) == "fiberhome"
+    assert detect_brand(realtek.host) == "realtek"
 
 
 # --- Huawei --------------------------------------------------------------------
@@ -223,3 +231,78 @@ def test_service_reports_wifi_cut(huawei, monkeypatch):
 def test_service_fiberhome_overview(fiberhome):
     ov = connect(Connection(fiberhome.host, None, "", "Fh2024!"))
     assert ov.networks == [] and "FiberHome" in ov.wifi_note and len(ov.devices) == 2
+
+
+# --- V-SOL / OptiTimes (Realtek boa) ---------------------------------------------
+
+def test_realtek_wrong_password(realtek):
+    with pytest.raises(AuthError):
+        RealtekDriver(realtek.host, "admin", "mala").login()
+
+
+def test_realtek_login_brand_and_networks(realtek):
+    with RealtekDriver(realtek.host, "admin", "stdONU101") as d:
+        assert d.brand == "V‑SOL"
+        nets = d.get_wifi_networks()
+    # wlan_idx 0 es 5 GHz en este equipo: la banda sale del equipo, no del índice
+    assert [(n.ssid, n.band) for n in nets] == [("Familia-5G", "5GHz"), ("Familia", "2.4GHz"),
+                                               ("Invitados", "2.4GHz")]
+    assert realtek.state["logged"] is False   # cerró sesión
+
+
+def test_realtek_password_keeps_security_settings(realtek):
+    w = realtek.state["wlan"]
+    with RealtekDriver(realtek.host, "admin", "stdONU101") as d:
+        nets = {n.ssid: n for n in d.get_wifi_networks()}
+        d.set_wifi(nets["Familia-5G"], password="NuevaClave2026")
+        d.set_wifi(nets["Familia"], password="NuevaClave2026")
+        with pytest.raises(NotSupportedError):
+            d.set_wifi(nets["Familia"], ssid="OtroNombre", password="NuevaClave2026")
+    s5, s24 = w[0]["ssids"][0], w[1]["ssids"][0]
+    # Clave cambiada; WPA2 + PMF opcional + SHA256 intactos en 5 GHz
+    assert (s5["psk"], s5["encrypt"], s5["u2"], s5["dot11w"], s5["sha"]) == ("NuevaClave2026", 4, 2, 1, 1)
+    # Mixto WPA/WPA2 con TKIP+AES intacto en 2.4 GHz
+    assert (s24["psk"], s24["encrypt"], s24["u"], s24["u2"]) == ("NuevaClave2026", 6, 3, 3)
+    assert s24["ssid"] == "Familia"
+
+
+def test_realtek_open_network_gets_wpa2(realtek):
+    with RealtekDriver(realtek.host, "admin", "stdONU101") as d:
+        guest = next(n for n in d.get_wifi_networks() if n.ssid == "Invitados")
+        d.set_wifi(guest, password="invitados99")
+    g = realtek.state["wlan"][1]["ssids"][1]
+    assert (g["encrypt"], g["u2"], g["psk"]) == (4, 2, "invitados99")
+
+
+def test_realtek_clients_block_unblock(realtek):
+    w = realtek.state["wlan"]
+    with RealtekDriver(realtek.host, "admin", "stdONU101") as d:
+        devs = d.get_devices()
+        assert [(x.mac, x.interface) for x in devs] == [("A4:C1:38:00:00:05", "5GHz"),
+                                                       ("A4:C1:38:00:00:24", "2.4GHz"),
+                                                       ("A4:C1:38:00:00:25", "2.4GHz")]
+        d.block_device("a4:c1:38:00:00:24")
+        assert (w[0]["ac_mode"], w[1]["ac_mode"]) == (2, 2)      # lista negra en ambas bandas
+        assert [m for _, m in w[0]["ac"]] == [m for _, m in w[1]["ac"]] == ["a4:c1:38:00:00:24"]
+        assert [x.blocked for x in d.get_devices()] == [False, True, False]
+        d.unblock_device("A4:C1:38:00:00:24")
+        assert w[0]["ac"] == w[1]["ac"] == []
+
+
+def test_realtek_refuses_allowlist(realtek):
+    realtek.state["wlan"][1].update(ac_mode=1, ac=[(0, "a4:c1:38:00:00:25")])
+    with RealtekDriver(realtek.host, "admin", "stdONU101") as d:
+        with pytest.raises(NotSupportedError):
+            d.block_device("A4:C1:38:00:00:24")
+        assert d.get_blocked() == []
+    assert realtek.state["wlan"][0]["ac"] == [] and realtek.state["wlan"][0]["ac_mode"] == 0
+
+
+def test_realtek_service_overview_optitimes():
+    with FakeServer(RealtekHandler, realtek_state("OPTICTIMES")) as srv:
+        conn = Connection(srv.host, None, "", "stdONU101")
+        ov = connect(conn)
+        assert conn.brand_name == "OptiTimes" and not ov.can_rename
+        assert "solo cambia la clave" in ov.wifi_note and len(ov.networks) == 3
+        msg = change_wifi(conn, [(ov.networks[1], None)], "ClaveCasa77", "ClaveCasa77")
+        assert "Familia (2.4GHz: clave)" in msg

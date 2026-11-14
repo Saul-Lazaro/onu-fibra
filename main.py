@@ -84,7 +84,7 @@ KV = """
                 size_hint_y: None
                 height: dp(44)
             Label:
-                text: "Huawei · ZTE · FiberHome"
+                text: "Huawei · ZTE · FiberHome · V‑SOL · OptiTimes"
                 color: 0.6, 0.6, 0.65, 1
                 size_hint_y: None
                 height: dp(22)
@@ -98,7 +98,7 @@ KV = """
             Spinner:
                 id: brand
                 text: "Detectar marca"
-                values: ["Detectar marca", "Huawei", "ZTE", "FiberHome"]
+                values: ["Detectar marca", "Huawei", "ZTE", "FiberHome", "V‑SOL", "OptiTimes"]
                 size_hint_y: None
                 height: dp(50)
                 on_text: root.on_brand(self.text)
@@ -163,7 +163,7 @@ KV = """
                         text_size: self.size
                         valign: "middle"
                 Hint:
-                    text: "Deja la clave vacía para cambiar solo el nombre. Al guardar, los equipos conectados se desconectan y deben volver a entrar."
+                    text: ("Deja la clave vacía para cambiar solo el nombre. " if root.can_rename else "") + "Al guardar, los equipos conectados se desconectan y deben volver a entrar."
                 BigButton:
                     text: "Aplicando…" if root.busy else "Guardar cambios de Wi‑Fi"
                     disabled: root.busy or not root.can_wifi
@@ -209,6 +209,7 @@ class Root(BoxLayout):
     busy = BooleanProperty(False)
     connected = BooleanProperty(False)
     can_wifi = BooleanProperty(False)
+    can_rename = BooleanProperty(True)
     wifi_note = StringProperty("")
     devices_note = StringProperty("")
     status = StringProperty("Conéctate al Wi‑Fi de tu ONU y escribe el usuario y la contraseña de la etiqueta.")
@@ -278,13 +279,17 @@ class Root(BoxLayout):
             band = Label(text=n.band + ("" if n.enabled else "\n(apagada)"), size_hint_x=None, width=dp(74),
                          font_size="14sp", halign="center")
             ti = TextInput(text=n.ssid, multiline=False, write_tab=False, font_size="16sp",
-                           padding=[dp(10), dp(14)], hint_text="Nombre de la red")
+                           padding=[dp(10), dp(14)], hint_text="Nombre de la red",
+                           readonly=not ov.can_rename)
+            if not ov.can_rename:
+                ti.background_color = (0.75, 0.75, 0.78, 1)
             row.add_widget(cb)
             row.add_widget(band)
             row.add_widget(ti)
             self.ids.nets.add_widget(row)
             self.net_rows.append((cb, ti, n))
         self.can_wifi = bool(ov.networks)
+        self.can_rename = ov.can_rename
         self._show_devices(ov.devices)
         self.connected = True
         self._msg(f"Conectado a tu ONU {conn.brand_name}.")
