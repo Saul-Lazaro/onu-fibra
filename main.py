@@ -249,15 +249,10 @@ KV = """
                         font_size: "14sp"
                         on_release: root.open_panel()
                     SoftButton:
-                        text: "Cambiar de ONU"
+                        text: "Cerrar sesión"
                         height: dp(44)
                         font_size: "14sp"
                         on_release: root.logout()
-                SoftButton:
-                    text: "Cerrar sesión"
-                    height: dp(44)
-                    font_size: "14sp"
-                    on_release: root.logout()
 
             # ---------- 1. acceso (se oculta una vez iniciada la sesión) ----------
             Card:

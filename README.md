@@ -43,7 +43,7 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
    Tras la primera conexión correcta, la app **guarda** IP, marca, usuario y contraseña
    (almacenamiento privado de la app; se borra al desinstalar) y los rellena sola.
    *Olvidar usuario y contraseña guardados* los borra.
-   Al conectar, la tarjeta 1 se oculta; *Cambiar de ONU* o *Cerrar sesión* vuelven a mostrarla.
+   Al conectar, la tarjeta 1 se oculta; *Cerrar sesión* vuelve a mostrarla.
 2. Escribe usuario y contraseña de la etiqueta (si dejas el usuario vacío se usa
    el típico de la marca: Huawei `Epuser`, ZTE `user`, FiberHome `user`). **Conectar**.
 3. **Wi‑Fi**: solo aparecen las redes **encendidas**, cada una con su nombre y sus casilleros
