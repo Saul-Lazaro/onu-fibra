@@ -6,7 +6,7 @@ from onuchanger.detect import detect_brand
 from onuchanger.drivers.fiberhome import FiberhomeDriver
 from onuchanger.drivers.huawei import HuaweiDriver
 from onuchanger.drivers.zte import ZteDriver
-from onuchanger.service import Connection, block, change_wifi, connect, unblock
+from onuchanger.service import Connection, block, change_wifi, change_wifi_each, connect, unblock
 
 from fakes import (FakeServer, FiberhomeHandler, HuaweiHandler, RealtekHandler, ZteHandler, fiberhome_state,
                    huawei_state, realtek_state, zte_state)
@@ -217,6 +217,21 @@ def test_service_validates_before_touching_onu(huawei):
     with pytest.raises(ValueError):
         change_wifi(conn, [(ov.networks[0], "Casa-2G")], "", "")
     assert huawei.state["log"] == []
+
+
+def test_service_password_per_network(huawei):
+    conn = Connection(huawei.host, "huawei", "Epuser", "clave123")
+    ov = connect(conn)
+    n24, n5 = ov.networks
+    with pytest.raises(ValueError, match="5GHz"):
+        change_wifi_each(conn, [(n24, "Casa-2G", "Clave24aaa", "Clave24aaa"), (n5, "Casa-5G", "Clave5Gaaa", "otra")])
+    assert huawei.state["log"] == []
+    res = change_wifi_each(conn, [(n24, "Casa-2G", "Clave24aaa", "Clave24aaa"), (n5, "Casa-5G", "Clave5Gaaa", "Clave5Gaaa")])
+    assert res.creds == [("Casa-2G", "Clave24aaa"), ("Casa-5G", "Clave5Gaaa")]
+    assert "Casa-2G (2.4GHz: clave)" in res.message and "Casa-5G (5GHz: clave)" in res.message
+    # Sin clave en una red: esa red no se toca.
+    res = change_wifi_each(conn, [(n24, "Casa-2G", "", ""), (n5, "Casa-5G", "Otra5Gclave", "Otra5Gclave")])
+    assert "2.4GHz" not in res.message and res.creds == [("Casa-5G", "Otra5Gclave")]
 
 
 def test_service_reports_wifi_cut(huawei, monkeypatch):

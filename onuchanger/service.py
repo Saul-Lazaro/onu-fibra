@@ -97,23 +97,41 @@ class ChangeResult:
 
 def change_wifi(conn: Connection, changes: list[tuple[WifiNetwork, str | None]],
                 new_password: str, confirm: str) -> ChangeResult:
-    """changes: [(red, nuevo_nombre o None)]. Si new_password está vacío, no se cambia la clave."""
-    if new_password or confirm:
-        if new_password != confirm:
-            raise ValueError("Las claves no coinciden.")
-        validate_wifi_password(new_password)
-    password = new_password or None
-    todo = [(n, s if s and s != n.ssid else None) for n, s in changes]
-    todo = [(n, s) for n, s in todo if s is not None or password is not None]
+    """changes: [(red, nuevo_nombre o None)] con la misma clave para todas (vacía = no cambiarla)."""
+    return change_wifi_each(conn, [(n, s, new_password, confirm) for n, s in changes])
+
+
+def change_wifi_each(conn: Connection,
+                     items: list[tuple[WifiNetwork, str | None, str, str]]) -> ChangeResult:
+    """items: [(red, nuevo_nombre o None, clave, repetir_clave)]; cada red con su propia clave.
+
+    Clave vacía = esa red conserva su clave. Las redes sin cambios se omiten.
+    """
+    todo = []
+    for net, ssid, pw, confirm in items:
+        pw, confirm = pw or "", confirm or ""
+        if pw or confirm:
+            if pw != confirm:
+                raise ValueError(f"Red {net.band}: las claves no coinciden.")
+            try:
+                validate_wifi_password(pw)
+            except ValueError as e:
+                raise ValueError(f"Red {net.band}: {e}") from None
+        ssid = ssid.strip() if ssid else None
+        ssid = ssid if ssid and ssid != net.ssid else None
+        if ssid is not None:
+            try:
+                validate_ssid(ssid)
+            except ValueError as e:
+                raise ValueError(f"Red {net.band}: {e}") from None
+        if ssid is not None or pw:
+            todo.append((net, ssid, pw or None))
     if not todo:
         raise ValueError("No hay cambios: escribe un nombre nuevo o una clave nueva.")
-    for _, s in todo:
-        if s is not None:
-            validate_ssid(s)
 
     # Datos finales de cada red, para que el celular se reconecte solo.
     creds = []
-    for net, ssid in todo:
+    for net, ssid, password in todo:
         key = password or net.extra.get("psk", "")
         if key and (ssid or net.ssid, key) not in creds:
             creds.append((ssid or net.ssid, key))
@@ -123,8 +141,10 @@ def change_wifi(conn: Connection, changes: list[tuple[WifiNetwork, str | None]],
     try:
         d.login()
         # Primero 5 GHz: si el teléfono está en 2.4 GHz conserva la conexión hasta el final.
-        for net, ssid in sorted(todo, key=lambda t: t[0].band != "5GHz"):
+        for net, ssid, password in sorted(todo, key=lambda t: t[0].band != "5GHz"):
             d.set_wifi(net, ssid=ssid, password=password)
+            if password:
+                net.extra["psk"] = password
             what = " y ".join(x for x, on in (("nombre", ssid), ("clave", password)) if on)
             done.append(f"{ssid or net.ssid} ({net.band}: {what})")
     except (requests.ConnectionError, requests.Timeout):

@@ -23,7 +23,7 @@ from onuchanger.android_wifi import save_and_connect
 from onuchanger.base import OnuError
 from onuchanger.version import VERSION
 from onuchanger.isp import ISP_MESSAGE, ISP_PHONES, WHATSAPP_TEXT, check_unlock_password, isp_reachable
-from onuchanger.service import (BRAND_KEYS, USER_HINTS, Connection, block, change_wifi, connect, list_devices,
+from onuchanger.service import (BRAND_KEYS, USER_HINTS, Connection, block, change_wifi_each, connect, list_devices,
                                 suggest_host, unblock)
 
 Window.softinput_mode = "below_target"  # el teclado no tapa el campo activo
@@ -253,21 +253,11 @@ KV = """
                         height: dp(44)
                         font_size: "14sp"
                         on_release: root.logout()
-                RoundButton:
-                    # Visible solo con el modo técnico activo
-                    text: "Salir del modo técnico"
-                    bg: 0.839, 0.271, 0.271, 1
-                    font_size: "14sp"
-                    size_hint_y: None
-                    height: dp(44) if (root.unlocked and root.connected) else 0
-                    opacity: 1 if (root.unlocked and root.connected) else 0
-                    disabled: not (root.unlocked and root.connected)
-                    on_release: root.exit_tech_mode()
                 SoftButton:
-                    text: "Salir de la aplicación"
+                    text: "Cerrar sesión"
                     height: dp(44)
                     font_size: "14sp"
-                    on_release: root.exit_app()
+                    on_release: root.logout()
 
             # ---------- 1. acceso (se oculta una vez iniciada la sesión) ----------
             Card:
@@ -313,16 +303,6 @@ KV = """
                         height: dp(44)
                         font_size: "14sp"
                         on_release: root.ask_unlock()
-                RoundButton:
-                    # Visible solo con el modo técnico activo
-                    text: "Salir del modo técnico"
-                    bg: 0.839, 0.271, 0.271, 1
-                    font_size: "15sp"
-                    size_hint_y: None
-                    height: dp(46) if root.unlocked else 0
-                    opacity: 1 if root.unlocked else 0
-                    disabled: not root.unlocked
-                    on_release: root.exit_tech_mode()
                 SoftButton:
                     text: "Salir de la aplicación"
                     on_release: root.exit_app()
@@ -370,14 +350,6 @@ KV = """
                     height: self.minimum_height if root.can_wifi else 0
                     opacity: 1 if root.can_wifi else 0
                     disabled: not root.can_wifi
-                    Field:
-                        id: new_pw
-                        password: True
-                        hint_text: "Nueva clave (8 a 63 caracteres)"
-                    Field:
-                        id: confirm
-                        password: True
-                        hint_text: "Repite la nueva clave"
                     BoxLayout:
                         size_hint_y: None
                         height: dp(36)
@@ -385,14 +357,14 @@ KV = """
                             size_hint_x: None
                             width: dp(40)
                             color: DARK
-                            on_active: new_pw.password = confirm.password = not self.active
+                            on_active: root.show_passwords(self.active)
                         Label:
-                            text: "Mostrar clave"
+                            text: "Mostrar claves"
                             color: TEXT
                             text_size: self.size
                             valign: "middle"
                     Hint:
-                        text: ("Deja la clave vacía para cambiar solo el nombre. " if root.can_rename else "") + "Al guardar, el celular se reconecta solo con los datos nuevos; los demás equipos deben volver a entrar."
+                        text: ("Deja la clave vacía para cambiar solo el nombre. " if root.can_rename else "Deja vacía la clave de la red que no quieras cambiar. ") + "Al guardar, el celular se reconecta solo con los datos nuevos; los demás equipos deben volver a entrar."
                     BigButton:
                         text: "Aplicando…" if root.busy else "Guardar cambios de Wi‑Fi"
                         disabled: root.busy or not root.can_wifi
@@ -565,7 +537,7 @@ class Root(BoxLayout):
     def __init__(self, **kw):
         super().__init__(**kw)
         self.conn = None
-        self.net_rows = []   # (CheckBox, TextInput, WifiNetwork)
+        self.net_rows = []   # (nombre, clave, repetir, WifiNetwork)
         self.my_ip = ""
         self.ids.host.text = suggest_host()
         self.unlocked = _load_unlock()
@@ -761,18 +733,24 @@ class Root(BoxLayout):
         self.wifi_note = ov.wifi_note
         self.devices_note = ov.devices_note
         for n in ov.networks:
-            row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(6))
-            cb = CheckBox(size_hint_x=None, width=dp(40), active=True, color=DARK)
-            band = Label(text=n.band, size_hint_x=None, width=dp(66), font_size="14sp", bold=True,
-                         halign="center", color=DARK)
+            # Cada red con su nombre y sus propios casilleros de clave (sin casilla para
+            # apagar la red: la app nunca desactiva el Wi‑Fi).
+            box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6),
+                            padding=(0, dp(4), 0, dp(6)))
+            box.bind(minimum_height=box.setter("height"))
+            title = Label(text=f"Red {n.band}", size_hint_y=None, height=dp(26), font_size="15sp",
+                          bold=True, color=DARK, halign="left", valign="middle")
+            title.bind(size=title.setter("text_size"))
+            box.add_widget(title)
             ti = Factory.Field(text=n.ssid, hint_text="Nombre de la red", readonly=not ov.can_rename)
             if not ov.can_rename:
                 ti.background_color = (0.93, 0.95, 0.92, 1)
-            row.add_widget(cb)
-            row.add_widget(band)
-            row.add_widget(ti)
-            self.ids.nets.add_widget(row)
-            self.net_rows.append((cb, ti, n))
+            pw = Factory.Field(password=True, hint_text=f"Nueva clave {n.band} (8 a 63 caracteres)")
+            cf = Factory.Field(password=True, hint_text=f"Repite la nueva clave {n.band}")
+            for w in (ti, pw, cf):
+                box.add_widget(w)
+            self.ids.nets.add_widget(box)
+            self.net_rows.append((ti, pw, cf, n))
         self.can_wifi = bool(ov.networks)
         self.can_rename = ov.can_rename
         self._show_devices(ov.devices)
@@ -793,7 +771,6 @@ class Root(BoxLayout):
         self.ids.nets.clear_widgets()
         self.ids.devs.clear_widgets()
         self.net_rows = []
-        self.ids.new_pw.text = self.ids.confirm.text = ""
         self._msg("Sesión cerrada. Revisa los datos y pulsa Conectar.", ok=None)
 
     def forget_login(self):
@@ -803,18 +780,21 @@ class Root(BoxLayout):
         self._msg("Se borraron el usuario y la contraseña guardados.", ok=None)
 
     # --- Wi-Fi -------------------------------------------------------------
+    def show_passwords(self, show):
+        for _, pw, cf, _ in self.net_rows:
+            pw.password = cf.password = not show
+
     def do_change(self):
-        changes = [(n, ti.text.strip()) for cb, ti, n in self.net_rows if cb.active]
-        if not changes:
-            self._msg("Marca al menos una red.", ok=False)
+        items = [(n, ti.text.strip(), pw.text, cf.text) for ti, pw, cf, n in self.net_rows]
+        if not items:
             return
-        pw, confirm, conn = self.ids.new_pw.text, self.ids.confirm.text, self.conn
-        self._run(lambda: change_wifi(conn, changes, pw, confirm), self._changed, "Guardando en la ONU…")
+        conn = self.conn
+        self._run(lambda: change_wifi_each(conn, items), self._changed, "Guardando en la ONU…")
 
     def _changed(self, result):
-        self.ids.new_pw.text = self.ids.confirm.text = ""
-        for cb, ti, n in self.net_rows:
-            if cb.active and ti.text.strip():
+        for ti, pw, cf, n in self.net_rows:
+            pw.text = cf.text = ""
+            if ti.text.strip():
                 n.ssid = ti.text.strip()
         # Reconectar este celular con los datos nuevos para no perder la conexión.
         try:

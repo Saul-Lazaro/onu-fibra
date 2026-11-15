@@ -67,12 +67,14 @@ mi-router).
 
 **Modo técnico:** el botón *Desbloquear* pide la misma contraseña de técnico que
 mi-router (en el código solo está su hash) y deja la app sin verificación en ese
-celular. Con el modo técnico activo aparece en la pantalla inicial el botón rojo
-**Salir del modo técnico** (también con la sesión iniciada, o tocando *Modo técnico activo*). Ante
-cualquier otro error, el aviso ofrece **Abrir panel de la ONU** en el navegador.
+celular; para salir, toca *Modo técnico activo* y elige **Salir del modo técnico**.
+Ante cualquier otro error, el aviso ofrece **Abrir panel de la ONU** en el navegador.
 
-**Salir de la aplicación:** botón en la pantalla inicial y también con la sesión iniciada; cierra la app (si hay
-una operación en curso, pide esperar a que termine).
+**Salir de la aplicación** está en la pantalla inicial. Con la sesión iniciada, el
+botón **Cerrar sesión** vuelve a la pantalla inicial (los datos guardados se conservan).
+
+**Wi‑Fi:** cada red (2.4 GHz y 5 GHz) tiene su nombre y sus propios casilleros de clave;
+la red con la clave vacía conserva la suya. La app no tiene opción para apagar redes.
 
 ## Seguridad: qué hace y qué no
 
