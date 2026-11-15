@@ -298,6 +298,19 @@ KV = """
                         height: dp(44)
                         font_size: "14sp"
                         on_release: root.ask_unlock()
+                RoundButton:
+                    # Visible solo con el modo técnico activo
+                    text: "Salir del modo técnico"
+                    bg: 0.839, 0.271, 0.271, 1
+                    font_size: "15sp"
+                    size_hint_y: None
+                    height: dp(46) if root.unlocked else 0
+                    opacity: 1 if root.unlocked else 0
+                    disabled: not root.unlocked
+                    on_release: root.exit_tech_mode()
+                SoftButton:
+                    text: "Salir de la aplicación"
+                    on_release: root.exit_app()
                 LinkButton:
                     text: "Olvidar usuario y contraseña guardados" if root.has_saved else ""
                     height: dp(28) if root.has_saved else 0
@@ -670,10 +683,8 @@ class Root(BoxLayout):
         keep = RoundButton(text="Seguir en modo técnico", size_hint_y=None, height=dp(48), bg=SOFT, color=DARK)
 
         def lock(*_):
-            _clear_unlock()
-            self.unlocked = False
             popup.dismiss()
-            self._msg("Saliste del modo técnico: la app vuelve a verificar el proveedor.", ok=None)
+            self.exit_tech_mode()
 
         out.bind(on_release=lock)
         keep.bind(on_release=lambda *_: popup.dismiss())
@@ -683,6 +694,18 @@ class Root(BoxLayout):
         popup.height = box.height + dp(92)
         self._lock_popup, self._lock_out = popup, out
         popup.open()
+
+    def exit_tech_mode(self):
+        _clear_unlock()
+        self.unlocked = False
+        self._msg("Saliste del modo técnico: la app vuelve a verificar el proveedor.", ok=None)
+
+    def exit_app(self):
+        """Cierra la app (en Android termina la actividad)."""
+        if self.busy:
+            self._msg("Espera a que termine la operación en curso para salir.", ok=False)
+            return
+        App.get_running_app().stop()
 
     def _msg(self, text, ok=True):
         self.status_color = {True: list(DARK), False: list(RED), None: list(MUTED)}[ok]
