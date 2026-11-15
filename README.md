@@ -43,11 +43,11 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
    Tras la primera conexión correcta, la app **guarda** IP, marca, usuario y contraseña
    (almacenamiento privado de la app; se borra al desinstalar) y los rellena sola.
    *Olvidar usuario y contraseña guardados* los borra.
-   Al conectar, la tarjeta 1 se oculta; *Cambiar de ONU* vuelve a mostrarla.
+   Al conectar, la tarjeta 1 se oculta; *Cambiar de ONU* o *Cerrar sesión* vuelven a mostrarla.
 2. Escribe usuario y contraseña de la etiqueta (si dejas el usuario vacío se usa
    el típico de la marca: Huawei `Epuser`, ZTE `user`, FiberHome `user`). **Conectar**.
-3. **Wi‑Fi**: solo aparecen las redes **encendidas**. Marca las redes, edita el nombre
-   y/o escribe la clave nueva → *Guardar*.
+3. **Wi‑Fi**: solo aparecen las redes **encendidas**, cada una con su nombre y sus casilleros
+   de clave. Edita el nombre y/o escribe la clave nueva de la red que quieras → *Guardar*.
    **El celular se reconecta solo** con el nombre y la clave nuevos:
    - Android 11 o superior: aparece el aviso del sistema «¿Guardar red?» → *Guardar*.
    - Android 10: la primera vez, una notificación pide *Permitir* redes sugeridas.
