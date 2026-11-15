@@ -250,12 +250,58 @@ KV = """
                     disabled: root.updating
                     on_release: root.do_update()
 
+            # ---------- pantalla de equipos (se abre con "Bloquear equipos en la red") ----------
+            Card:
+                id: devcard
+                opacity: 1 if (root.connected and root.devices_open) else 0
+                disabled: not (root.connected and root.devices_open)
+                height: self.minimum_height if (root.connected and root.devices_open) else 0
+                padding: (dp(16), dp(14)) if (root.connected and root.devices_open) else (0, 0)
+                BoxLayout:
+                    size_hint_y: None
+                    height: dp(48)
+                    spacing: dp(10)
+                    SoftButton:
+                        text: "Regresar"
+                        height: dp(48)
+                        font_size: "15sp"
+                        on_release: root.close_devices()
+                    SoftButton:
+                        text: "Cerrar sesión"
+                        height: dp(48)
+                        font_size: "15sp"
+                        on_release: root.logout()
+                Section:
+                    text: "Bloquear equipos en la red"
+                Label:
+                    text: root.session_text
+                    color: MUTED
+                    font_size: "13sp"
+                    text_size: self.width, None
+                    size_hint_y: None
+                    height: self.texture_size[1] + dp(2)
+                Hint:
+                    text: root.devices_note or "Toca Bloquear para que un equipo deje de usar tu Wi‑Fi."
+                BoxLayout:
+                    id: devs
+                    orientation: "vertical"
+                    size_hint_y: None
+                    height: self.minimum_height
+                    spacing: dp(6)
+                SoftButton:
+                    text: "Actualizar lista"
+                    disabled: root.busy or not root.devices_open
+                    on_release: root.do_refresh()
+                SoftButton:
+                    text: "Regresar"
+                    on_release: root.close_devices()
+
             # ---------- sesión abierta (reemplaza a la tarjeta 1) ----------
             Card:
-                opacity: 1 if root.connected else 0
-                disabled: not root.connected
-                height: self.minimum_height if root.connected else 0
-                padding: (dp(16), dp(12)) if root.connected else (0, 0)
+                opacity: 1 if root.main_view else 0
+                disabled: not root.main_view
+                height: self.minimum_height if root.main_view else 0
+                padding: (dp(16), dp(12)) if root.main_view else (0, 0)
                 Label:
                     text: root.session_text
                     color: DARK
@@ -270,12 +316,12 @@ KV = """
                     height: dp(54)
                     spacing: dp(10)
                     RoundButton:
-                        text: "Ocultar equipos" if root.devices_open else "Bloquear equipos en la red"
+                        text: "Bloquear equipos en la red"
                         bg: 0.839, 0.271, 0.271, 1
                         font_size: "14sp"
                         halign: "center"
                         text_size: self.width - dp(8), None
-                        on_release: root.toggle_devices()
+                        on_release: root.open_devices()
                     SoftButton:
                         text: "Cerrar sesión"
                         height: dp(54)
@@ -350,10 +396,10 @@ KV = """
 
             # ---------- 2. Wi-Fi ----------
             Card:
-                opacity: 1 if root.connected else 0
-                disabled: not root.connected
-                height: self.minimum_height if root.connected else 0
-                padding: (dp(16), dp(14)) if root.connected else (0, 0)
+                opacity: 1 if root.main_view else 0
+                disabled: not root.main_view
+                height: self.minimum_height if root.main_view else 0
+                padding: (dp(16), dp(14)) if root.main_view else (0, 0)
                 Section:
                     text: "2. Nombre y clave del Wi‑Fi"
                 Hint:
@@ -382,7 +428,7 @@ KV = """
                             color: DARK
                             on_active: root.show_passwords(self.active)
                         Label:
-                            text: "Mostrar claves"
+                            text: "Mostrar contraseñas"
                             color: TEXT
                             text_size: self.size
                             valign: "middle"
@@ -392,36 +438,6 @@ KV = """
                         text: "Aplicando…" if root.busy else "Guardar cambios de Wi‑Fi"
                         disabled: root.busy or not root.can_wifi
                         on_release: root.do_change()
-
-            # ---------- 3. equipos (se abre con "Bloquear equipos en la red") ----------
-            Card:
-                id: devcard
-                opacity: 1 if (root.connected and root.devices_open) else 0
-                disabled: not (root.connected and root.devices_open)
-                height: self.minimum_height if (root.connected and root.devices_open) else 0
-                padding: (dp(16), dp(14)) if (root.connected and root.devices_open) else (0, 0)
-                Section:
-                    text: "Equipos en la red"
-                Hideable:
-                    orientation: "vertical"
-                    spacing: dp(8)
-                    size_hint_y: None
-                    height: self.minimum_height
-                    Hint:
-                        text: root.devices_note or "Toca Bloquear para que un equipo deje de usar tu Wi‑Fi."
-                    BoxLayout:
-                        id: devs
-                        orientation: "vertical"
-                        size_hint_y: None
-                        height: self.minimum_height
-                        spacing: dp(6)
-                    SoftButton:
-                        text: "Actualizar lista"
-                        disabled: root.busy or not root.devices_open
-                        on_release: root.do_refresh()
-                    SoftButton:
-                        text: "Ocultar equipos"
-                        on_release: root.toggle_devices()
 
             Label:
                 text: "Group S & M · Max's Solution E.I.R.L. · Maxs Onu v" + app.version_text
@@ -561,6 +577,7 @@ class Root(BoxLayout):
     has_saved = BooleanProperty(False)  # hay usuario/contraseña guardados
     session_text = StringProperty("")
     devices_open = BooleanProperty(False)
+    main_view = BooleanProperty(False)   # sesión abierta y pantalla principal (no la de equipos)
     update_version = StringProperty("")
     update_notes = StringProperty("")
     update_status = StringProperty("")
@@ -777,17 +794,25 @@ class Root(BoxLayout):
             box = BoxLayout(orientation="vertical", size_hint_y=None, spacing=dp(6),
                             padding=(0, dp(4), 0, dp(6)))
             box.bind(minimum_height=box.setter("height"))
-            title = Label(text=f"Red {n.band}", size_hint_y=None, height=dp(26), font_size="15sp",
+            def small(text, top=0):
+                lb = Label(text=text, size_hint_y=None, height=dp(20) + top, font_size="13sp", bold=True,
+                           color=TEXT, halign="left", valign="bottom")
+                lb.bind(size=lb.setter("text_size"))
+                return lb
+            title = Label(text=f"Red {n.band}", size_hint_y=None, height=dp(28), font_size="16sp",
                           bold=True, color=DARK, halign="left", valign="middle")
             title.bind(size=title.setter("text_size"))
             box.add_widget(title)
-            ti = Factory.Field(text=n.ssid, hint_text="Nombre de la red", readonly=not ov.can_rename)
+            ti = Factory.Field(text=n.ssid, hint_text=f"Nombre de la red {n.band}", readonly=not ov.can_rename)
             if not ov.can_rename:
                 ti.background_color = (0.93, 0.95, 0.92, 1)
-            pw = Factory.Field(password=True, hint_text=f"Nueva clave {n.band} (8 a 63 caracteres)")
-            cf = Factory.Field(password=True, hint_text=f"Repite la nueva clave {n.band}")
-            for w in (ti, pw, cf):
-                box.add_widget(w)
+            pw = Factory.Field(password=True, hint_text="Nueva contraseña (8 a 63 caracteres)")
+            cf = Factory.Field(password=True, hint_text="Repite la nueva contraseña")
+            box.add_widget(small("Nombre de la red"))
+            box.add_widget(ti)
+            box.add_widget(small(f"Contraseña de la red {n.band}", top=dp(4)))
+            box.add_widget(pw)
+            box.add_widget(cf)
             self.ids.nets.add_widget(box)
             self.net_rows.append((ti, pw, cf, n))
         self.can_wifi = bool(ov.networks)
@@ -889,14 +914,24 @@ class Root(BoxLayout):
             self._msg(f"No se pudo abrir el instalador ({e.__class__.__name__}).", ok=False)
         return False
 
-    def toggle_devices(self):
-        self.devices_open = not self.devices_open
-        if self.devices_open:
-            # Llevar la vista a la lista recién abierta.
-            def go(*_):
-                sv = next(w for w in self.walk() if isinstance(w, ScrollView))
-                sv.scroll_to(self.ids.devcard, padding=dp(10), animate=True)
-            Clock.schedule_once(go, 0.15)
+    def on_connected(self, *_):
+        self.main_view = self.connected and not self.devices_open
+
+    def on_devices_open(self, *_):
+        self.main_view = self.connected and not self.devices_open
+        Clock.schedule_once(lambda *_: self._scroll_top(), 0.05)
+
+    def _scroll_top(self):
+        sv = next((w for w in self.walk() if isinstance(w, ScrollView)), None)
+        if sv is not None:
+            sv.scroll_y = 1
+
+    def open_devices(self):
+        """Pantalla aparte para bloquear equipos (Regresar vuelve a la principal)."""
+        self.devices_open = True
+
+    def close_devices(self):
+        self.devices_open = False
 
     def logout(self):
         """Vuelve a la tarjeta 1 (los datos guardados se conservan)."""

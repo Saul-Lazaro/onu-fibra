@@ -54,7 +54,7 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
    - Android 9 o menos: se conecta directamente.
    Si solo cambias el nombre, la app usa la clave actual que lee de la ONU.
 4. **Equipos**: con la sesión iniciada, el botón **Bloquear equipos en la red** (junto a
-   *Cerrar sesión*) despliega la lista; cada equipo muestra por qué red está conectado (**2.4 GHz**, **5 GHz** o cable).
+   *Cerrar sesión*) abre una pantalla aparte con **Regresar** y **Cerrar sesión**; cada equipo muestra por qué red está conectado (**2.4 GHz**, **5 GHz** o cable).
    *Bloquear* / *Desbloquear*. El celular donde está la app aparece
    como **Este celular** y **no se puede bloquear** (la app y el servicio lo rechazan).
 
@@ -93,7 +93,8 @@ Ante cualquier otro error, el aviso ofrece **Abrir panel de la ONU** en el naveg
 **Salir de la aplicación** está en la pantalla inicial. Con la sesión iniciada, el
 botón **Cerrar sesión** vuelve a la pantalla inicial (los datos guardados se conservan).
 
-**Wi‑Fi:** cada red (2.4 GHz y 5 GHz) tiene su nombre y sus propios casilleros de clave;
+**Wi‑Fi:** cada red (2.4 GHz y 5 GHz) tiene el título *Nombre de la red* con su casillero y,
+debajo, *Contraseña de la red* con sus dos casilleros;
 la red con la clave vacía conserva la suya. La app no tiene opción para apagar redes.
 
 ## Seguridad: qué hace y qué no
