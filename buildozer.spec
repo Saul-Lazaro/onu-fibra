@@ -20,7 +20,7 @@ fullscreen = 0
 
 # INTERNET: hablar con la ONU. ACCESS_WIFI_STATE: leer la IP del gateway.
 # CHANGE_WIFI_STATE: guardar la red con el nombre/clave nuevos y reconectar el celular.
-android.permissions = INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE, CHANGE_WIFI_STATE
+android.permissions = INTERNET, ACCESS_NETWORK_STATE, ACCESS_WIFI_STATE, CHANGE_WIFI_STATE, REQUEST_INSTALL_PACKAGES
 android.api = 36
 android.minapi = 24
 android.ndk = 28c

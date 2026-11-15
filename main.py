@@ -20,7 +20,8 @@ from kivy.uix.label import Label
 from kivy.uix.popup import Popup
 from kivy.uix.textinput import TextInput
 
-from onuchanger.android_wifi import save_and_connect
+from onuchanger.android_wifi import on_android, save_and_connect
+from onuchanger.update import AndroidUpdater, check_update
 from onuchanger.base import OnuError
 from onuchanger.version import VERSION
 from onuchanger.isp import ISP_MESSAGE, ISP_PHONES, WHATSAPP_TEXT, check_unlock_password, isp_reachable
@@ -224,6 +225,30 @@ KV = """
                             pos: self.center_x - dp(40), self.y
                             size: dp(80), dp(4)
                             radius: [dp(2)]
+
+            # ---------- actualización disponible (panel «APP Max Fibra») ----------
+            Card:
+                opacity: 1 if root.update_version else 0
+                disabled: not root.update_version
+                height: self.minimum_height if root.update_version else 0
+                padding: (dp(16), dp(12)) if root.update_version else (0, 0)
+                Label:
+                    text: "Nueva versión " + root.update_version + " disponible"
+                    color: DARK
+                    bold: True
+                    font_size: "16sp"
+                    text_size: self.width, None
+                    halign: "center"
+                    size_hint_y: None
+                    height: self.texture_size[1] + dp(4)
+                Hint:
+                    text: root.update_notes
+                    halign: "center"
+                    height: (self.texture_size[1] + dp(4)) if root.update_notes else 0
+                BigButton:
+                    text: root.update_status or "Actualizar"
+                    disabled: root.updating
+                    on_release: root.do_update()
 
             # ---------- sesión abierta (reemplaza a la tarjeta 1) ----------
             Card:
@@ -536,6 +561,10 @@ class Root(BoxLayout):
     has_saved = BooleanProperty(False)  # hay usuario/contraseña guardados
     session_text = StringProperty("")
     devices_open = BooleanProperty(False)
+    update_version = StringProperty("")
+    update_notes = StringProperty("")
+    update_status = StringProperty("")
+    updating = BooleanProperty(False)
     wifi_note = StringProperty("")
     devices_note = StringProperty("")
     status = StringProperty("Conéctate al Wi‑Fi de tu ONU y escribe el usuario y la contraseña de la etiqueta.")
@@ -557,6 +586,9 @@ class Root(BoxLayout):
             self.ids.admin.text = saved["password"]
             self.has_saved = True
             self.status = "Tus datos están guardados: pulsa Conectar."
+        self.update_info = None
+        self._updater = None
+        Clock.schedule_once(lambda *_: self.check_updates(), 1.5)
 
     # --- utilidades --------------------------------------------------------
     def _run(self, work, on_ok, busy_text="Trabajando…"):
@@ -768,6 +800,94 @@ class Root(BoxLayout):
         _save_login({"host": self.ids.host.text.strip(), "brand": self.ids.brand.text,
                      "user": conn.username, "password": conn.password})
         self.has_saved = True
+
+    # --- actualizaciones (panel «APP Max Fibra») -----------------------------
+    def check_updates(self):
+        current = App.get_running_app().version_text
+        threading.Thread(target=lambda: self._got_update(check_update(current)), daemon=True).start()
+
+    @mainthread
+    def _got_update(self, info):
+        if info is None:
+            return
+        self.update_info = info
+        self.update_version = info.version
+        self.update_notes = info.notes
+        if info.mandatory:
+            self._mandatory_popup()
+
+    def _mandatory_popup(self):
+        info = self.update_info
+        box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12), size_hint_y=None)
+        box.bind(minimum_height=box.setter("height"))
+        text = f"Hay una actualización obligatoria (versión {info.version}). Instálala para seguir usando la app."
+        if info.notes:
+            text += "\n\n" + info.notes
+        box.add_widget(_wrap_label(text, halign="center"))
+        popup = Popup(title="Actualización obligatoria", content=box, size_hint=(0.9, None), auto_dismiss=False)
+        go = RoundButton(text="Actualizar", size_hint_y=None, height=dp(48), bg=GREEN)
+        go.bind(on_release=lambda *_: self.do_update())
+        out = RoundButton(text="Salir de la aplicación", size_hint_y=None, height=dp(48), bg=SOFT, color=DARK)
+        out.bind(on_release=lambda *_: App.get_running_app().stop())
+        box.add_widget(go)
+        box.add_widget(out)
+        box.bind(height=lambda *_: setattr(popup, "height", box.height + dp(92)))
+        popup.height = box.height + dp(92)
+        self._update_popup = popup
+        popup.open()
+
+    def do_update(self):
+        info = self.update_info
+        if info is None or self.updating:
+            return
+        if not on_android():
+            open_in_browser(info.url)
+            return
+        if self.update_status == "Instalar actualización" and self._updater is not None:
+            try:                         # ya descargada: solo abrir el instalador otra vez
+                self._updater.install()
+                return
+            except Exception:
+                pass
+        try:
+            if self._updater is None:
+                self._updater = AndroidUpdater()
+            up = self._updater
+            if not up.can_install():
+                self._alert("Permiso necesario",
+                            "Para actualizar, permite que Maxs Onu instale apps: en la pantalla que se abre, "
+                            "activa «Permitir de esta fuente», vuelve a la app y toca Actualizar otra vez.")
+                up.ask_install_permission()
+                return
+            up.start(info)
+        except Exception as e:      # sin DownloadManager, etc.: que lo baje el navegador
+            self.update_status = ""
+            self._msg(f"No se pudo descargar desde la app ({e.__class__.__name__}); se abre el navegador.", ok=False)
+            open_in_browser(info.url)
+            return
+        self.updating = True
+        self.update_status = "Descargando… 0 %"
+        Clock.schedule_interval(self._poll_update, 0.7)
+
+    def _poll_update(self, _dt):
+        try:
+            state, pct = self._updater.progress()
+        except Exception:
+            state, pct = "failed", 0
+        if state == "running":
+            self.update_status = f"Descargando… {pct} %"
+            return True
+        self.updating = False
+        if state == "failed":
+            self.update_status = "Reintentar actualización"
+            self._msg("No se pudo descargar la actualización. Revisa tu internet e inténtalo de nuevo.", ok=False)
+            return False
+        self.update_status = "Instalar actualización"
+        try:
+            self._updater.install()
+        except Exception as e:
+            self._msg(f"No se pudo abrir el instalador ({e.__class__.__name__}).", ok=False)
+        return False
 
     def toggle_devices(self):
         self.devices_open = not self.devices_open

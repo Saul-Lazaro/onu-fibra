@@ -58,6 +58,24 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
    *Bloquear* / *Desbloquear*. El celular donde está la app aparece
    como **Este celular** y **no se puede bloquear** (la app y el servicio lo rechazan).
 
+## Actualizaciones desde el panel (APP Max Fibra)
+
+Las versiones nuevas se publican en el panel **Red Maxs Solution → APP Max Fibra**
+(`https://redmax.maxsolution.pe/app-fibra`):
+
+1. Descarga el APK de GitHub Actions (artefacto `MaxsOnu-v0.3.N`).
+2. En *APP Max Fibra* → *Subir una versión*: número de versión **igual al del APK**
+   (ej. `0.3.15`), el archivo `.apk`, qué cambió (opcional) y, si hace falta, marca
+   *Actualización obligatoria* → **Subir versión**.
+
+Al abrirse, la app consulta `GET /api/v1/app-fibra/version` (público). Si la versión
+publicada es mayor que la instalada, muestra **Nueva versión X disponible** con
+**Actualizar**; si es obligatoria, una ventana que no deja usar la app hasta actualizar.
+*Actualizar* descarga `/api/v1/app-fibra/descargar` con el gestor de descargas de Android
+y abre el instalador. La primera vez Android pide permitir *Instalar apps desconocidas*
+para Maxs Onu. Como todas las versiones usan la misma llave, se instala encima.
+Código: `onuchanger/update.py`.
+
 ## Verificación del proveedor (igual que mi-router)
 
 Al pulsar **Conectar**, la app hace ping a **10.99.0.1** (equipo de la Red
