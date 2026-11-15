@@ -21,7 +21,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.textinput import TextInput
 
 from onuchanger.android_wifi import on_android, save_and_connect
-from onuchanger.update import AndroidUpdater, check_update
+from onuchanger.update import AndroidInstaller, DownloadError, check_update, download_apk
 from onuchanger.base import OnuError
 from onuchanger.version import VERSION
 from onuchanger.isp import ISP_MESSAGE, ISP_PHONES, WHATSAPP_TEXT, check_unlock_password, isp_reachable
@@ -604,7 +604,8 @@ class Root(BoxLayout):
             self.has_saved = True
             self.status = "Tus datos están guardados: pulsa Conectar."
         self.update_info = None
-        self._updater = None
+        self._installer = None
+        self._downloaded = ""
         Clock.schedule_once(lambda *_: self.check_updates(), 1.5)
 
     # --- utilidades --------------------------------------------------------
@@ -852,6 +853,7 @@ class Root(BoxLayout):
         popup = Popup(title="Actualización obligatoria", content=box, size_hint=(0.9, None), auto_dismiss=False)
         go = RoundButton(text="Actualizar", size_hint_y=None, height=dp(48), bg=GREEN)
         go.bind(on_release=lambda *_: self.do_update())
+        self.bind(update_status=lambda *_: setattr(go, "text", self.update_status or "Actualizar"))
         out = RoundButton(text="Salir de la aplicación", size_hint_y=None, height=dp(48), bg=SOFT, color=DARK)
         out.bind(on_release=lambda *_: App.get_running_app().stop())
         box.add_widget(go)
@@ -868,51 +870,88 @@ class Root(BoxLayout):
         if not on_android():
             open_in_browser(info.url)
             return
-        if self.update_status == "Instalar actualización" and self._updater is not None:
-            try:                         # ya descargada: solo abrir el instalador otra vez
-                self._updater.install()
-                return
-            except Exception:
-                pass
         try:
-            if self._updater is None:
-                self._updater = AndroidUpdater()
-            up = self._updater
-            if not up.can_install():
+            if self._installer is None:
+                self._installer = AndroidInstaller()
+            inst = self._installer
+            if not inst.can_install():
                 self._alert("Permiso necesario",
                             "Para actualizar, permite que Maxs Onu instale apps: en la pantalla que se abre, "
                             "activa «Permitir de esta fuente», vuelve a la app y toca Actualizar otra vez.")
-                up.ask_install_permission()
+                inst.ask_install_permission()
                 return
-            up.start(info)
-        except Exception as e:      # sin DownloadManager, etc.: que lo baje el navegador
-            self.update_status = ""
-            self._msg(f"No se pudo descargar desde la app ({e.__class__.__name__}); se abre el navegador.", ok=False)
-            open_in_browser(info.url)
+        except Exception as e:
+            self._update_failed(f"No se pudo preparar la instalación ({e.__class__.__name__}).")
+            return
+        dest = os.path.join(App.get_running_app().user_data_dir,
+                            "MaxsOnu-v%s.apk" % "".join(c for c in info.version if c.isalnum() or c in "._-"))
+        if self._downloaded == dest and os.path.exists(dest):      # ya descargada: solo instalar
+            self._install(dest)
             return
         self.updating = True
         self.update_status = "Descargando… 0 %"
-        Clock.schedule_interval(self._poll_update, 0.7)
 
-    def _poll_update(self, _dt):
+        @mainthread
+        def progress(done, total):
+            if total:
+                self.update_status = f"Descargando… {done * 100 // total} %  ({done / 1048576:.1f} de {total / 1048576:.1f} MB)"
+            else:
+                self.update_status = f"Descargando… {done / 1048576:.1f} MB"
+
+        @mainthread
+        def finished(path, error):
+            self.updating = False
+            if error:
+                self._update_failed(error)
+                return
+            self._downloaded = path
+            self._install(path)
+
+        def work():
+            try:
+                for old in os.listdir(os.path.dirname(dest)):      # limpiar APK de versiones viejas
+                    if old.startswith("MaxsOnu-v") and old.endswith(".apk") and old != os.path.basename(dest):
+                        try:
+                            os.remove(os.path.join(os.path.dirname(dest), old))
+                        except OSError:
+                            pass
+                finished(download_apk(info, dest, progress), None)
+            except DownloadError as e:
+                finished(None, str(e))
+            except Exception as e:
+                finished(None, f"No se pudo descargar ({e.__class__.__name__}).")
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _install(self, path):
+        self.update_status = "Instalando…"
         try:
-            state, pct = self._updater.progress()
-        except Exception:
-            state, pct = "failed", 0
-        if state == "running":
-            self.update_status = f"Descargando… {pct} %"
-            return True
-        self.updating = False
-        if state == "failed":
-            self.update_status = "Reintentar actualización"
-            self._msg("No se pudo descargar la actualización. Revisa tu internet e inténtalo de nuevo.", ok=False)
-            return False
-        self.update_status = "Instalar actualización"
-        try:
-            self._updater.install()
+            self._installer.install(path)
+            self.update_status = "Instalar actualización"
+            self._msg("Descarga completa. Confirma «Actualizar» en la ventana de Android.", ok=True)
         except Exception as e:
-            self._msg(f"No se pudo abrir el instalador ({e.__class__.__name__}).", ok=False)
-        return False
+            self._update_failed(f"No se pudo abrir el instalador ({e.__class__.__name__}).")
+
+    def _update_failed(self, reason):
+        self.updating = False
+        self.update_status = "Reintentar actualización"
+        info = self.update_info
+        box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12), size_hint_y=None)
+        box.bind(minimum_height=box.setter("height"))
+        box.add_widget(_wrap_label(reason + "\n\nPuedes reintentar o descargarla con el navegador "
+                                   "(al terminar, toca el archivo para instalarlo).", halign="center"))
+        popup = Popup(title="No se pudo actualizar", content=box, size_hint=(0.9, None))
+        again = RoundButton(text="Reintentar", size_hint_y=None, height=dp(48), bg=GREEN)
+        again.bind(on_release=lambda *_: (popup.dismiss(), self.do_update()))
+        web = RoundButton(text="Descargar con el navegador", size_hint_y=None, height=dp(48), bg=SOFT, color=DARK)
+        web.bind(on_release=lambda *_: (popup.dismiss(), open_in_browser(info.url)))
+        close = RoundButton(text="Cerrar", size_hint_y=None, height=dp(48), bg=GREY)
+        close.bind(on_release=lambda *_: popup.dismiss())
+        for w in (again, web, close):
+            box.add_widget(w)
+        box.bind(height=lambda *_: setattr(popup, "height", box.height + dp(92)))
+        popup.height = box.height + dp(92)
+        popup.open()
 
     def on_connected(self, *_):
         self.main_view = self.connected and not self.devices_open

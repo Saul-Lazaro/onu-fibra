@@ -71,9 +71,12 @@ Las versiones nuevas se publican en el panel **Red Maxs Solution → APP Max Fib
 Al abrirse, la app consulta `GET /api/v1/app-fibra/version` (público). Si la versión
 publicada es mayor que la instalada, muestra **Nueva versión X disponible** con
 **Actualizar**; si es obligatoria, una ventana que no deja usar la app hasta actualizar.
-*Actualizar* descarga `/api/v1/app-fibra/descargar` con el gestor de descargas de Android
-y abre el instalador. La primera vez Android pide permitir *Instalar apps desconocidas*
-para Maxs Onu. Como todas las versiones usan la misma llave, se instala encima.
+*Actualizar* descarga `/api/v1/app-fibra/descargar` desde la propia app (con porcentaje;
+si la conexión se corta, reanuda donde quedó) y comprueba el tamaño y el SHA‑256 que
+informa el panel. Luego instala con el instalador de Android (PackageInstaller): aparece la
+ventana «¿Actualizar esta app?». La primera vez Android pide permitir *Instalar apps
+desconocidas* para Maxs Onu. Si algo falla, la app ofrece **Descargar con el navegador**.
+Como todas las versiones usan la misma llave, se instala encima.
 Código: `onuchanger/update.py`.
 
 ## Verificación del proveedor (igual que mi-router)

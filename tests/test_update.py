@@ -1,5 +1,11 @@
 from onuchanger import update
-from onuchanger.update import AndroidUpdater, check_update, is_newer, parse_response, parse_version
+import hashlib
+
+import pytest
+import requests
+
+from onuchanger.update import (AndroidInstaller, DownloadError, UpdateInfo, check_update, download_apk, is_newer,
+                              parse_response, parse_version)
 
 
 def test_versions():
@@ -57,66 +63,126 @@ def test_check_update_handles_errors_and_dev():
     assert check_update("dev", session=S(R())) is None
 
 
-def test_android_download_and_install_flow():
+def test_panel_real_response_with_size_and_hash():
+    data = {"disponible": True, "version": "0.3.16", "hay_nueva": True, "obligatoria": False, "notas": None,
+            "tamano": 49579028, "sha256": "3e409412d7c61b4588a801aefededb047e85187a8444062b4ae2fc1710689646",
+            "fecha": "2026-11-15T03:40:19-05:00", "url": "https://redmax.maxsolution.pe/api/v1/app-fibra/descargar"}
+    info = parse_response(data, "0.3.15")
+    assert info.version == "0.3.16" and info.size == 49579028 and info.sha256.startswith("3e4094")
+    assert info.notes == "" and not info.mandatory and info.url == update.DOWNLOAD_URL
+    assert parse_response(data, "0.3.16") is None
+
+
+class _Resp:
+    def __init__(self, status, body, headers=None, cut_after=None):
+        self.status_code, self.body, self.headers, self.cut_after = status, body, headers or {}, cut_after
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def iter_content(self, n):
+        sent = 0
+        for i in range(0, len(self.body), n):
+            if self.cut_after is not None and sent >= self.cut_after:
+                raise requests.ConnectionError("se cortó")
+            block = self.body[i:i + n]
+            sent += len(block)
+            yield block
+
+
+class _Server:
+    """Sirve `data` con soporte de Range; la primera respuesta se corta a la mitad."""
+
+    def __init__(self, data, cut_first=True, accept_range=True):
+        self.data, self.cut, self.accept_range, self.calls = data, cut_first, accept_range, []
+
+    def get(self, url, headers=None, stream=False, timeout=None):
+        rng = (headers or {}).get("Range")
+        self.calls.append(rng)
+        start = int(rng.split("=")[1].rstrip("-")) if rng and self.accept_range else 0
+        body = self.data[start:]
+        cut = len(body) // 2 if self.cut else None
+        self.cut = False
+        return _Resp(206 if start else 200, body, {"Content-Length": str(len(body))}, cut_after=cut)
+
+
+def test_download_resumes_after_cut_and_checks_hash(tmp_path, monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    data = bytes(range(256)) * 4000                     # ~1 MB
+    info = UpdateInfo("0.3.17", size=len(data), sha256=hashlib.sha256(data).hexdigest(), url=update.DOWNLOAD_URL)
+    seen = []
+    srv = _Server(data)
+    out = download_apk(info, str(tmp_path / "a.apk"), progress=lambda d, t: seen.append((d, t)), session=srv,
+                       chunk=64 * 1024)
+    assert open(out, "rb").read() == data
+    assert srv.calls[0] is None and srv.calls[1].startswith("bytes=") and srv.calls[1] != "bytes=0-"
+    assert seen[-1] == (len(data), len(data))
+
+
+def test_download_without_range_support_restarts(tmp_path, monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    data = b"PK" + b"x" * 300000
+    info = UpdateInfo("1", size=len(data), sha256=hashlib.sha256(data).hexdigest())
+    out = download_apk(info, str(tmp_path / "b.apk"), session=_Server(data, accept_range=False), chunk=50000)
+    assert open(out, "rb").read() == data
+
+
+def test_download_rejects_wrong_hash(tmp_path, monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    data = b"PK" + b"y" * 1000
+    info = UpdateInfo("1", size=len(data), sha256="0" * 64)
+    with pytest.raises(DownloadError, match="no coincide"):
+        download_apk(info, str(tmp_path / "c.apk"), session=_Server(data, cut_first=False))
+    assert not (tmp_path / "c.apk").exists()
+
+
+def test_installer_writes_session_and_opens_confirmation(tmp_path):
     calls = []
+    apk = tmp_path / "x.apk"
+    apk.write_bytes(b"PK" + b"z" * 600000)
 
     class Obj:
-        def __init__(self, name, *a):
-            self.name, self.a = name, a
+        def __init__(self, name):
+            self.name = name
 
         def __getattr__(self, attr):
             def f(*a):
                 calls.append((self.name, attr, a))
-                if attr == "getSystemService":
-                    return Obj("dm")
-                if attr == "enqueue":
-                    return 42
-                if attr == "query":
-                    return Obj("cursor")
-                if attr == "moveToFirst":
-                    return True
-                if attr == "getInt":
-                    return 8          # STATUS_SUCCESSFUL
-                if attr == "getLong":
-                    return 1000
-                if attr == "getColumnIndex":
-                    return 0
-                if attr == "getUriForDownloadedFile":
-                    return "content://downloads/42"
-                if attr == "getPackageManager":
-                    return Obj("pm")
-                if attr == "canRequestPackageInstalls":
-                    return True
-                return None
+                return {"getPackageManager": Obj("pm"), "getPackageInstaller": Obj("installer"),
+                        "createSession": 5, "openSession": Obj("session"), "openWrite": Obj("out"),
+                        "getClass": "cls", "getIntentSender": "sender", "canRequestPackageInstalls": True,
+                        "getAction": "com.onuchanger.INSTALL_STATUS", "getIntExtra": -1,
+                        "getParcelableExtra": Obj("confirm")}.get(attr)
             return f
 
-    consts = {"DOWNLOAD_SERVICE": "download", "VISIBILITY_VISIBLE_NOTIFY_COMPLETED": 1, "DIRECTORY_DOWNLOADS": "Download",
-              "STATUS_SUCCESSFUL": 8, "STATUS_FAILED": 16, "COLUMN_STATUS": "status",
-              "COLUMN_BYTES_DOWNLOADED_SO_FAR": "b", "COLUMN_TOTAL_SIZE_BYTES": "t", "ACTION_VIEW": "view",
-              "FLAG_GRANT_READ_URI_PERMISSION": 1, "FLAG_ACTIVITY_NEW_TASK": 2, "SDK_INT": 34}
+    consts = {"SDK_INT": 34, "MODE_FULL_INSTALL": 1, "FLAG_ACTIVITY_SINGLE_TOP": 1, "FLAG_UPDATE_CURRENT": 2,
+              "FLAG_MUTABLE": 4, "EXTRA_STATUS": "st", "STATUS_PENDING_USER_ACTION": -1, "EXTRA_INTENT": "ei",
+              "FLAG_ACTIVITY_NEW_TASK": 8}
 
     class Cls:
         def __init__(self, name):
             self.name = name
-            if name == "org.kivy.android.PythonActivity":
+            if name.endswith("PythonActivity"):
                 self.mActivity = Obj("activity")
 
         def __getattr__(self, attr):
             if attr in consts:
                 return consts[attr]
-            return lambda *a: Obj(self.name + "." + attr, *a)
+            return lambda *a: (calls.append((self.name, attr, a)), Obj(self.name + "." + attr))[1]
 
         def __call__(self, *a):
-            return Obj(self.name, *a)
+            return Obj(self.name)
 
-    up = AndroidUpdater(autoclass=Cls)
-    assert up.can_install()
-    up.start(update.UpdateInfo("0.3.15"))
-    assert up.download_id == 42
-    assert ("android.app.DownloadManager$Request", "setDestinationInExternalFilesDir",
-            (up.activity, "Download", "MaxsOnu-v0.3.15.apk")) in [(c[0], c[1], c[2]) for c in calls]
-    assert up.progress() == ("done", 100)
-    up.install()
-    started = [c for c in calls if c[1] == "startActivity"]
-    assert started and any(c[1] == "setDataAndType" and c[2] == ("content://downloads/42", update.APK_MIME)
-                           for c in calls)
+    bound = []
+    inst = AndroidInstaller(autoclass=Cls, bind=bound.append)
+    assert inst.can_install() and bound
+    inst.install(str(apk))
+    written = sum(a[2] for n, m, a in calls if n == "out" and m == "write")
+    assert written == apk.stat().st_size
+    assert ("session", "commit", ("sender",)) in calls
+    assert any(m == "getActivity" and a[3] == 2 | 4 for n, m, a in calls)
+    bound[0](Obj("intent"))                       # Android pide confirmación al usuario
+    assert ("activity", "startActivity", ) in [(n, m) for n, m, a in calls if m == "startActivity"]

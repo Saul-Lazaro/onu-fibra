@@ -33,6 +33,8 @@ class UpdateInfo:
     notes: str = ""
     mandatory: bool = False
     url: str = DOWNLOAD_URL
+    size: int = 0          # bytes, si el panel lo informa ("tamano")
+    sha256: str = ""       # huella del APK, si el panel la informa
 
 
 def parse_version(text: str) -> tuple[int, ...]:
@@ -87,10 +89,17 @@ def parse_response(data: dict, current: str) -> UpdateInfo | None:
     if not url.lower().startswith("https://"):
         url = DOWNLOAD_URL       # solo descargas cifradas
     notes = _pick(d, "notas", "cambios", "novedades", "notes", "descripcion", default="")
+    try:
+        size = int(_pick(d, "tamano", "tamaño", "size", "bytes", default=0) or 0)
+    except (TypeError, ValueError):
+        size = 0
+    sha = str(_pick(d, "sha256", "hash", default="") or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", sha):
+        sha = ""
     return UpdateInfo(version=str(remote or "nueva"), notes=str(notes or "").strip(),
                       mandatory=_truthy(_pick(d, "obligatoria", "forzar", "mandatory", "required",
                                               default=False)),
-                      url=url)
+                      url=url, size=size, sha256=sha)
 
 
 def check_update(current: str, timeout: float = 8.0, session=None) -> UpdateInfo | None:
@@ -108,75 +117,159 @@ def check_update(current: str, timeout: float = 8.0, session=None) -> UpdateInfo
         return None
 
 
-# --- Android: descargar e instalar --------------------------------------------------------
-class AndroidUpdater:
-    """Descarga el APK con el DownloadManager y abre el instalador del sistema."""
+# --- Descarga (Python puro: funciona igual en el celular y en las pruebas) ---------------
+class DownloadError(Exception):
+    pass
 
-    def __init__(self, autoclass=None):
+
+def download_apk(info: UpdateInfo, dest: str, progress=None, session=None, retries: int = 6,
+                 chunk: int = 256 * 1024, timeout: float = 30.0) -> str:
+    """Descarga el APK a `dest`. Si la conexión se corta, reanuda desde donde quedó (Range).
+    Comprueba tamaño y SHA‑256 cuando el panel los informa. `progress(hechos, total)`."""
+    import hashlib
+    import os
+
+    s = session or requests
+    part = dest + ".part"
+    total = info.size or 0
+    have = os.path.getsize(part) if os.path.exists(part) else 0
+    if total and have > total:
+        os.remove(part)
+        have = 0
+    last_error = None
+    for _ in range(retries):
+        headers = {"Range": f"bytes={have}-"} if have else {}
+        try:
+            with s.get(info.url, headers=headers, stream=True, timeout=timeout) as r:
+                if r.status_code == 416 and total and have == total:
+                    break                                     # ya estaba completo
+                if r.status_code not in (200, 206):
+                    raise DownloadError(f"El panel respondió {r.status_code}.")
+                if r.status_code == 200 and have:             # no aceptó reanudar: desde cero
+                    have = 0
+                if not total:
+                    cl = r.headers.get("Content-Length")
+                    if cl and cl.isdigit():
+                        total = int(cl) + (have if r.status_code == 206 else 0)
+                with open(part, "ab" if have else "wb") as f:
+                    for block in r.iter_content(chunk):
+                        if not block:
+                            continue
+                        f.write(block)
+                        have += len(block)
+                        if progress:
+                            progress(have, total)
+            if not total or have >= total:
+                break
+        except (requests.RequestException, OSError) as e:      # corte: reintentar desde `have`
+            last_error = e
+            import time
+            time.sleep(2)
+    else:
+        raise DownloadError("La descarga se cortó varias veces. Revisa tu internet e inténtalo de nuevo."
+                            + (f" ({last_error.__class__.__name__})" if last_error else ""))
+    if total and have != total:
+        raise DownloadError("La descarga quedó incompleta. Inténtalo de nuevo.")
+    if info.sha256:
+        h = hashlib.sha256()
+        with open(part, "rb") as f:
+            for block in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(block)
+        if h.hexdigest() != info.sha256:
+            os.remove(part)
+            raise DownloadError("El archivo descargado no coincide con el publicado. Inténtalo de nuevo.")
+    os.replace(part, dest)
+    return dest
+
+
+# --- Android: instalar con PackageInstaller -----------------------------------------------
+class AndroidInstaller:
+    """Instala el APK con PackageInstaller (no hace falta compartir el archivo con otra app).
+
+    Android muestra su ventana «¿Quieres actualizar esta app?»: llega como un intent a
+    PythonActivity (onNewIntent) con STATUS_PENDING_USER_ACTION y se abre desde ahí.
+    """
+
+    def __init__(self, autoclass=None, bind=None):
         if autoclass is None:
             from jnius import autoclass
         self.ac = autoclass
         self.activity = autoclass("org.kivy.android.PythonActivity").mActivity
-        self.dm = self.activity.getSystemService(autoclass("android.content.Context").DOWNLOAD_SERVICE)
-        self.download_id = None
+        self.sdk = autoclass("android.os.Build$VERSION").SDK_INT
+        if bind is None:
+            try:
+                from android import activity as _act     # módulo "android" de python-for-android
+                bind = lambda cb: _act.bind(on_new_intent=cb)
+            except Exception:
+                bind = None
+        if bind is not None:
+            bind(self._on_new_intent)
+        self.last_status = None
+        try:
+            from jnius import cast as _cast
+            self._cast = _cast
+        except Exception:
+            self._cast = lambda _name, obj: obj
 
     def can_install(self) -> bool:
-        """Android 8+: ¿el usuario permitió a Maxs Onu instalar apps?"""
-        if self.ac("android.os.Build$VERSION").SDK_INT < 26:
+        if self.sdk < 26:
             return True
         return bool(self.activity.getPackageManager().canRequestPackageInstalls())
 
     def ask_install_permission(self) -> None:
-        """Abre Ajustes > «Instalar apps desconocidas» para esta app."""
         Intent = self.ac("android.content.Intent")
         Uri = self.ac("android.net.Uri")
         Settings = self.ac("android.provider.Settings")
-        it = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                    Uri.parse("package:" + self.activity.getPackageName()))
-        self.activity.startActivity(it)
+        self.activity.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                           Uri.parse("package:" + self.activity.getPackageName())))
 
-    def start(self, info: UpdateInfo) -> None:
-        Request = self.ac("android.app.DownloadManager$Request")
-        Uri = self.ac("android.net.Uri")
-        Environment = self.ac("android.os.Environment")
-        name = "MaxsOnu-v%s.apk" % re.sub(r"[^0-9A-Za-z._-]", "", info.version or "nueva")
-        req = Request(Uri.parse(info.url))
-        req.setTitle("Maxs Onu " + (info.version or ""))
-        req.setDescription("Descargando la actualización")
-        req.setMimeType(APK_MIME)
-        req.setNotificationVisibility(Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-        req.setDestinationInExternalFilesDir(self.activity, Environment.DIRECTORY_DOWNLOADS, name)
-        self.download_id = self.dm.enqueue(req)
+    def install(self, path: str) -> None:
+        import os
 
-    def progress(self) -> tuple[str, int]:
-        """('running'|'done'|'failed', porcentaje)."""
-        DM = self.ac("android.app.DownloadManager")
-        Query = self.ac("android.app.DownloadManager$Query")
-        q = Query()
-        q.setFilterById([self.download_id])
-        c = self.dm.query(q)
-        try:
-            if not c.moveToFirst():
-                return "failed", 0
-            status = c.getInt(c.getColumnIndex(DM.COLUMN_STATUS))
-            done = c.getLong(c.getColumnIndex(DM.COLUMN_BYTES_DOWNLOADED_SO_FAR))
-            total = c.getLong(c.getColumnIndex(DM.COLUMN_TOTAL_SIZE_BYTES))
-        finally:
-            c.close()
-        pct = int(done * 100 / total) if total > 0 else 0
-        if status == DM.STATUS_SUCCESSFUL:
-            return "done", 100
-        if status == DM.STATUS_FAILED:
-            return "failed", pct
-        return "running", pct
-
-    def install(self) -> None:
-        """Abre el instalador con el APK descargado (URI content:// del DownloadManager)."""
+        PI = self.ac("android.content.pm.PackageInstaller")
+        Params = self.ac("android.content.pm.PackageInstaller$SessionParams")
         Intent = self.ac("android.content.Intent")
-        uri = self.dm.getUriForDownloadedFile(self.download_id)
-        if uri is None:
-            raise RuntimeError("No se encontró el archivo descargado.")
-        it = Intent(Intent.ACTION_VIEW)
-        it.setDataAndType(uri, APK_MIME)
-        it.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK)
-        self.activity.startActivity(it)
+        PendingIntent = self.ac("android.app.PendingIntent")
+        installer = self.activity.getPackageManager().getPackageInstaller()
+        params = Params(Params.MODE_FULL_INSTALL)
+        session_id = installer.createSession(params)
+        session = installer.openSession(session_id)
+        try:
+            size = os.path.getsize(path)
+            out = session.openWrite("maxsonu.apk", 0, size)
+            with open(path, "rb") as f:
+                for block in iter(lambda: f.read(256 * 1024), b""):
+                    out.write(block, 0, len(block))
+            session.fsync(out)
+            out.close()
+            # El resultado vuelve a esta misma actividad (onNewIntent).
+            it = Intent(self.activity, self.activity.getClass())
+            it.setAction("com.onuchanger.INSTALL_STATUS")
+            it.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            flags = PendingIntent.FLAG_UPDATE_CURRENT
+            if self.sdk >= 31:
+                flags |= PendingIntent.FLAG_MUTABLE           # el sistema agrega el estado
+            pi = PendingIntent.getActivity(self.activity, 7, it, flags)
+            session.commit(pi.getIntentSender())
+        except Exception:
+            session.abandon()
+            raise
+        finally:
+            session.close()
+
+    def _on_new_intent(self, intent) -> None:
+        try:
+            if intent is None or intent.getAction() != "com.onuchanger.INSTALL_STATUS":
+                return
+            PI = self.ac("android.content.pm.PackageInstaller")
+            Intent = self.ac("android.content.Intent")
+            status = intent.getIntExtra(PI.EXTRA_STATUS, -999)
+            self.last_status = status
+            if status == PI.STATUS_PENDING_USER_ACTION:
+                confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT)
+                if confirm is not None:
+                    confirm = self._cast("android.content.Intent", confirm)
+                    confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    self.activity.startActivity(confirm)
+        except Exception:
+            pass
