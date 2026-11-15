@@ -253,6 +253,21 @@ KV = """
                         height: dp(44)
                         font_size: "14sp"
                         on_release: root.logout()
+                RoundButton:
+                    # Visible solo con el modo técnico activo
+                    text: "Salir del modo técnico"
+                    bg: 0.839, 0.271, 0.271, 1
+                    font_size: "14sp"
+                    size_hint_y: None
+                    height: dp(44) if (root.unlocked and root.connected) else 0
+                    opacity: 1 if (root.unlocked and root.connected) else 0
+                    disabled: not (root.unlocked and root.connected)
+                    on_release: root.exit_tech_mode()
+                SoftButton:
+                    text: "Salir de la aplicación"
+                    height: dp(44)
+                    font_size: "14sp"
+                    on_release: root.exit_app()
 
             # ---------- 1. acceso (se oculta una vez iniciada la sesión) ----------
             Card:
