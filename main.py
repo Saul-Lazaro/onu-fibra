@@ -6,7 +6,8 @@ import threading
 from urllib.parse import quote
 
 from kivy.app import App
-from kivy.clock import mainthread
+from kivy.clock import Clock, mainthread
+from kivy.uix.scrollview import ScrollView
 from kivy.core.window import Window
 from kivy.factory import Factory
 from kivy.lang import Builder
@@ -241,16 +242,18 @@ KV = """
                     height: self.texture_size[1] + dp(4)
                 BoxLayout:
                     size_hint_y: None
-                    height: dp(44)
+                    height: dp(54)
                     spacing: dp(10)
-                    SoftButton:
-                        text: "Abrir panel de la ONU"
-                        height: dp(44)
+                    RoundButton:
+                        text: "Ocultar equipos" if root.devices_open else "Bloquear equipos en la red"
+                        bg: 0.839, 0.271, 0.271, 1
                         font_size: "14sp"
-                        on_release: root.open_panel()
+                        halign: "center"
+                        text_size: self.width - dp(8), None
+                        on_release: root.toggle_devices()
                     SoftButton:
                         text: "Cerrar sesión"
-                        height: dp(44)
+                        height: dp(54)
                         font_size: "14sp"
                         on_release: root.logout()
 
@@ -365,27 +368,35 @@ KV = """
                         disabled: root.busy or not root.can_wifi
                         on_release: root.do_change()
 
-            # ---------- 3. equipos ----------
+            # ---------- 3. equipos (se abre con "Bloquear equipos en la red") ----------
             Card:
-                opacity: 1 if root.connected else 0
-                disabled: not root.connected
-                height: self.minimum_height if root.connected else 0
-                padding: (dp(16), dp(14)) if root.connected else (0, 0)
+                id: devcard
+                opacity: 1 if (root.connected and root.devices_open) else 0
+                disabled: not (root.connected and root.devices_open)
+                height: self.minimum_height if (root.connected and root.devices_open) else 0
+                padding: (dp(16), dp(14)) if (root.connected and root.devices_open) else (0, 0)
                 Section:
-                    text: "3. Equipos conectados"
-                Hint:
-                    text: root.devices_note
-                    height: (self.texture_size[1] + dp(4)) if root.devices_note else 0
-                BoxLayout:
-                    id: devs
+                    text: "Equipos en la red"
+                Hideable:
                     orientation: "vertical"
+                    spacing: dp(8)
                     size_hint_y: None
                     height: self.minimum_height
-                    spacing: dp(6)
-                SoftButton:
-                    text: "Actualizar lista"
-                    disabled: root.busy
-                    on_release: root.do_refresh()
+                    Hint:
+                        text: root.devices_note or "Toca Bloquear para que un equipo deje de usar tu Wi‑Fi."
+                    BoxLayout:
+                        id: devs
+                        orientation: "vertical"
+                        size_hint_y: None
+                        height: self.minimum_height
+                        spacing: dp(6)
+                    SoftButton:
+                        text: "Actualizar lista"
+                        disabled: root.busy or not root.devices_open
+                        on_release: root.do_refresh()
+                    SoftButton:
+                        text: "Ocultar equipos"
+                        on_release: root.toggle_devices()
 
             Label:
                 text: "Group S & M · Max's Solution E.I.R.L. · Maxs Onu v" + app.version_text
@@ -524,6 +535,7 @@ class Root(BoxLayout):
     unlocked = BooleanProperty(False)   # modo técnico: no verifica el proveedor (hasta desinstalar)
     has_saved = BooleanProperty(False)  # hay usuario/contraseña guardados
     session_text = StringProperty("")
+    devices_open = BooleanProperty(False)
     wifi_note = StringProperty("")
     devices_note = StringProperty("")
     status = StringProperty("Conéctate al Wi‑Fi de tu ONU y escribe el usuario y la contraseña de la etiqueta.")
@@ -699,7 +711,7 @@ class Root(BoxLayout):
 
     # --- conectar ----------------------------------------------------------
     def do_connect(self):
-        self.connected = self.can_wifi = False
+        self.connected = self.can_wifi = self.devices_open = False
         self.ids.nets.clear_widgets()
         self.ids.devs.clear_widgets()
         self.net_rows = []
@@ -757,11 +769,20 @@ class Root(BoxLayout):
                      "user": conn.username, "password": conn.password})
         self.has_saved = True
 
+    def toggle_devices(self):
+        self.devices_open = not self.devices_open
+        if self.devices_open:
+            # Llevar la vista a la lista recién abierta.
+            def go(*_):
+                sv = next(w for w in self.walk() if isinstance(w, ScrollView))
+                sv.scroll_to(self.ids.devcard, padding=dp(10), animate=True)
+            Clock.schedule_once(go, 0.15)
+
     def logout(self):
         """Vuelve a la tarjeta 1 (los datos guardados se conservan)."""
         if self.busy:
             return
-        self.connected = self.can_wifi = False
+        self.connected = self.can_wifi = self.devices_open = False
         self.conn = None
         self.ids.nets.clear_widgets()
         self.ids.devs.clear_widgets()
@@ -813,11 +834,13 @@ class Root(BoxLayout):
             title = d.name or "Equipo sin nombre"
             if mine:
                 title += "  (este celular)"
-            detail = " · ".join(x for x in (d.interface, d.ip, d.mac) if x)
+            net = _net_label(d.interface)
+            detail = " · ".join(x for x in (d.ip, d.mac) if x)
             if d.blocked:
                 detail = "BLOQUEADO · " + detail
-            row = BoxLayout(size_hint_y=None, height=dp(62), spacing=dp(8), padding=[0, dp(4)])
-            lbl = Label(text=f"[b]{_esc(title)}[/b]\n[size=13sp][color=6b7a70]{_esc(detail)}[/color][/size]",
+            row = BoxLayout(size_hint_y=None, height=dp(80), spacing=dp(8), padding=[0, dp(4)])
+            lbl = Label(text=f"[b]{_esc(title)}[/b]\n[size=14sp][b][color=3f9142]{_esc(net)}[/color][/b][/size]"
+                             f"\n[size=12sp][color=6b7a70]{_esc(detail)}[/color][/size]",
                         markup=True, halign="left", valign="middle", color=TEXT)
             lbl.bind(size=lambda w, s: setattr(w, "text_size", s))
             row.add_widget(lbl)
@@ -827,7 +850,8 @@ class Root(BoxLayout):
                                      font_size="14sp", color=DARK))
             else:
                 btn = RoundButton(text="Desbloquear" if d.blocked else "Bloquear", size_hint_x=None,
-                                  width=dp(118), bg=GREEN if d.blocked else RED, font_size="15sp")
+                                  width=dp(118), bg=GREEN if d.blocked else RED, font_size="15sp",
+                                  size_hint_y=None, height=dp(50), pos_hint={"center_y": 0.5})
                 btn.bind(on_release=lambda _b, dev=d, m=mine: self._ask(dev, m))
                 row.add_widget(btn)
             box.add_widget(row)
@@ -881,6 +905,20 @@ class Root(BoxLayout):
             self._msg("Lista actualizada.")
 
         self._run(lambda: list_devices(conn), ok, "Leyendo equipos…")
+
+
+def _net_label(interface: str) -> str:
+    """Por qué red está conectado el equipo, en palabras del cliente."""
+    i = (interface or "").replace(" ", "").lower()
+    if i.startswith("2.4"):
+        return "Conectado a la red 2.4 GHz"
+    if i.startswith("5"):
+        return "Conectado a la red 5 GHz"
+    if i in ("cable", "lan") or i.startswith("lan") or i.startswith("eth"):
+        return "Conectado por cable"
+    if interface:
+        return f"Conectado por {interface}"
+    return "Red desconocida (equipo bloqueado)"
 
 
 def _esc(text: str) -> str:

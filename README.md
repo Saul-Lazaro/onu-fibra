@@ -53,7 +53,9 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
    - Android 10: la primera vez, una notificación pide *Permitir* redes sugeridas.
    - Android 9 o menos: se conecta directamente.
    Si solo cambias el nombre, la app usa la clave actual que lee de la ONU.
-4. **Equipos**: *Bloquear* / *Desbloquear*. El celular donde está la app aparece
+4. **Equipos**: con la sesión iniciada, el botón **Bloquear equipos en la red** (junto a
+   *Cerrar sesión*) despliega la lista; cada equipo muestra por qué red está conectado (**2.4 GHz**, **5 GHz** o cable).
+   *Bloquear* / *Desbloquear*. El celular donde está la app aparece
    como **Este celular** y **no se puede bloquear** (la app y el servicio lo rechazan).
 
 ## Verificación del proveedor (igual que mi-router)
