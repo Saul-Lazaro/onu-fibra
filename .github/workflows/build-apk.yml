@@ -93,8 +93,8 @@ jobs:
           keytool -storepasswd -keystore ~/.android/debug.keystore -storepass "$PASS" -new android
           FP=$(keytool -list -v -keystore ~/.android/debug.keystore -storepass android | grep "SHA256:" | head -1 | sed 's/.*SHA256: //; s/://g' | tr 'A-F' 'a-f')
           [ "$FP" = "ed809c21d661362b73c2cf8432abeb1b9333e7375851d26bdac743b3f17890a0" ] \
-            || { echo "::error::La llave del secreto no es la de Maxs Onu (huella $FP)."; exit 1; }
-          echo "Llave de Maxs Onu cargada (huella OK)"
+            || { echo "::error::La llave del secreto no es la de MaxsFibra (huella $FP)."; exit 1; }
+          echo "Llave de MaxsFibra cargada (huella OK)"
 
       - name: Compilar APK (debug)
         run: yes | buildozer android debug
@@ -108,18 +108,18 @@ jobs:
             "$BT/apksigner" sign --ks "$KS" --ks-pass pass:android --key-pass pass:android \
               --ks-key-alias androiddebugkey "$apk"
           done
-          # Huella pública de la llave de Maxs Onu (no es secreta).
+          # Huella pública de la llave de MaxsFibra (no es secreta).
           EXPECTED="ed809c21d661362b73c2cf8432abeb1b9333e7375851d26bdac743b3f17890a0"
           "$BT/apksigner" verify --print-certs bin/*.apk | grep -i "SHA-256"
           "$BT/apksigner" verify --print-certs bin/*.apk | grep -qi "$EXPECTED" \
-            || { echo "::error::El APK no quedó firmado con la llave de Maxs Onu"; exit 1; }
-          echo "FIRMA OK (llave fija de Maxs Onu)"
+            || { echo "::error::El APK no quedó firmado con la llave de MaxsFibra"; exit 1; }
+          echo "FIRMA OK (llave fija de MaxsFibra)"
           mkdir -p out
-          cp bin/*.apk "out/MaxsOnu-v${VERSION}.apk"
+          cp bin/*.apk "out/MaxsFibra-v${VERSION}.apk"
           ls -la out
 
       - uses: actions/upload-artifact@v4
         with:
-          name: MaxsOnu-v${{ env.VERSION }}
+          name: MaxsFibra-v${{ env.VERSION }}
           path: out/*.apk
           if-no-files-found: error

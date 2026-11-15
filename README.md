@@ -1,4 +1,4 @@
-# Maxs Onu — app Android para ONUs Huawei, ZTE, FiberHome, V‑SOL y OptiTimes
+# MaxsFibra — app Android para ONUs Huawei, ZTE, FiberHome, V‑SOL y OptiTimes
 
 App de Group S & M · Max's Solution E.I.R.L., con su logo y colores (mismo estilo que mi-router).
 
@@ -29,7 +29,7 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
 
 - Cada compilación lleva versión **0.3.N** (N = número de compilación de GitHub) y un
   `versionCode` siempre creciente. Se ve en la app (bajo el logo y al pie) y en el
-  archivo: artefacto **MaxsOnu-v0.3.N** → `MaxsOnu-v0.3.N.apk`.
+  archivo: artefacto **MaxsFibra-v0.3.N** → `MaxsFibra-v0.3.N.apk`.
 - Todas se firman con la **misma llave**, guardada como secretos del repositorio
   `MAXSONU_KEYSTORE_B64` (la llave) y `MAXSONU_KEYSTORE_PASS` (su contraseña); nada de eso está en el código. Así cada APK nuevo se instala encima
   del anterior. Si el secreto falta, la compilación se detiene en vez de firmar con otra llave.
@@ -63,7 +63,7 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
 Las versiones nuevas se publican en el panel **Red Maxs Solution → APP Max Fibra**
 (`https://redmax.maxsolution.pe/app-fibra`):
 
-1. Descarga el APK de GitHub Actions (artefacto `MaxsOnu-v0.3.N`).
+1. Descarga el APK de GitHub Actions (artefacto `MaxsFibra-v0.3.N`).
 2. En *APP Max Fibra* → *Subir una versión*: número de versión **igual al del APK**
    (ej. `0.3.15`), el archivo `.apk`, qué cambió (opcional) y, si hace falta, marca
    *Actualización obligatoria* → **Subir versión**.
@@ -75,7 +75,7 @@ publicada es mayor que la instalada, muestra **Nueva versión X disponible** con
 si la conexión se corta, reanuda donde quedó) y comprueba el tamaño y el SHA‑256 que
 informa el panel. Luego instala con el instalador de Android (PackageInstaller): aparece la
 ventana «¿Actualizar esta app?». La primera vez Android pide permitir *Instalar apps
-desconocidas* para Maxs Onu. Si algo falla, la app ofrece **Descargar con el navegador**.
+desconocidas* para MaxsFibra. Si algo falla, la app ofrece **Descargar con el navegador**.
 Como todas las versiones usan la misma llave, se instala encima.
 Código: `onuchanger/update.py`.
 

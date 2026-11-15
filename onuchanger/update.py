@@ -1,4 +1,4 @@
-"""Actualizaciones de Maxs Onu desde el panel Red Maxs Solution (opción «APP Max Fibra»).
+"""Actualizaciones de MaxsFibra desde el panel Red Maxs Solution (opción «APP Max Fibra»).
 
 El panel publica la última versión subida en una dirección pública:
 

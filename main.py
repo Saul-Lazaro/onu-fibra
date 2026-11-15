@@ -1,4 +1,4 @@
-"""Maxs Onu (Kivy): Wi‑Fi y equipos conectados de ONUs de fibra Huawei, ZTE, FiberHome, V‑SOL y OptiTimes."""
+"""MaxsFibra (Kivy): Wi‑Fi y equipos conectados de ONUs de fibra Huawei, ZTE, FiberHome, V‑SOL y OptiTimes."""
 import json
 import os
 import socket
@@ -196,7 +196,7 @@ KV = """
                     height: dp(120) if not root.connected else dp(72)
                     fit_mode: "contain"
                 Label:
-                    text: "Maxs Onu"
+                    text: "MaxsFibra"
                     font_size: "24sp"
                     bold: True
                     color: DARK
@@ -292,9 +292,6 @@ KV = """
                     text: "Actualizar lista"
                     disabled: root.busy or not root.devices_open
                     on_release: root.do_refresh()
-                SoftButton:
-                    text: "Regresar"
-                    on_release: root.close_devices()
 
             # ---------- sesión abierta (reemplaza a la tarjeta 1) ----------
             Card:
@@ -440,7 +437,7 @@ KV = """
                         on_release: root.do_change()
 
             Label:
-                text: "Group S & M · Max's Solution E.I.R.L. · Maxs Onu v" + app.version_text
+                text: "Group S & M · Max's Solution E.I.R.L. · MaxsFibra v" + app.version_text
                 color: MUTED
                 font_size: "12sp"
                 size_hint_y: None
@@ -876,7 +873,7 @@ class Root(BoxLayout):
             inst = self._installer
             if not inst.can_install():
                 self._alert("Permiso necesario",
-                            "Para actualizar, permite que Maxs Onu instale apps: en la pantalla que se abre, "
+                            "Para actualizar, permite que MaxsFibra instale apps: en la pantalla que se abre, "
                             "activa «Permitir de esta fuente», vuelve a la app y toca Actualizar otra vez.")
                 inst.ask_install_permission()
                 return
@@ -884,7 +881,7 @@ class Root(BoxLayout):
             self._update_failed(f"No se pudo preparar la instalación ({e.__class__.__name__}).")
             return
         dest = os.path.join(App.get_running_app().user_data_dir,
-                            "MaxsOnu-v%s.apk" % "".join(c for c in info.version if c.isalnum() or c in "._-"))
+                            "MaxsFibra-v%s.apk" % "".join(c for c in info.version if c.isalnum() or c in "._-"))
         if self._downloaded == dest and os.path.exists(dest):      # ya descargada: solo instalar
             self._install(dest)
             return
@@ -910,7 +907,7 @@ class Root(BoxLayout):
         def work():
             try:
                 for old in os.listdir(os.path.dirname(dest)):      # limpiar APK de versiones viejas
-                    if old.startswith("MaxsOnu-v") and old.endswith(".apk") and old != os.path.basename(dest):
+                    if old.startswith(("MaxsFibra-v", "MaxsOnu-v")) and old.endswith(".apk") and old != os.path.basename(dest):
                         try:
                             os.remove(os.path.join(os.path.dirname(dest), old))
                         except OSError:
@@ -1120,7 +1117,7 @@ def _esc(text: str) -> str:
 
 
 class OnuApp(App):
-    title = "Maxs Onu"
+    title = "MaxsFibra"
     version_text = VERSION
     icon = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.png")
 

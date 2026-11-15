@@ -1,5 +1,5 @@
 [app]
-title = Maxs Onu
+title = MaxsFibra
 package.name = onufibra
 package.domain = com.onuchanger
 source.dir = .
