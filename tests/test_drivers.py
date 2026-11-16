@@ -6,7 +6,7 @@ from onuchanger.detect import detect_brand
 from onuchanger.drivers.fiberhome import FiberhomeDriver
 from onuchanger.drivers.huawei import HuaweiDriver
 from onuchanger.drivers.zte import ZteDriver
-from onuchanger.service import Connection, block, change_wifi, change_wifi_each, connect, unblock
+from onuchanger.service import Connection, block, change_wifi, change_wifi_each, connect, list_devices, unblock
 
 from fakes import (FakeServer, FiberhomeHandler, HuaweiHandler, RealtekHandler, ZteHandler, fiberhome_state,
                    huawei_state, realtek_state, zte_state)
@@ -515,3 +515,50 @@ def test_cannot_block_own_phone(huawei):
     other = next(d for d in ov.devices if d.ip != "192.168.100.10")
     devs = block(conn, other, own_ip="192.168.100.10")
     assert next(x for x in devs if x.mac == other.mac).blocked
+
+
+# --- V‑SOL con código de verificación en imagen ---------------------------------------
+from onuchanger.base import CaptchaRequired
+from onuchanger.service import disconnect
+
+
+def _code(img: bytes) -> str:
+    return img.split(b"tEXtcode\x00", 1)[1][:4].decode()
+
+
+def test_realtek_text_code_needs_no_input(realtek):
+    conn = Connection(realtek.host, "realtek", "admin", "stdONU101")
+    ov = connect(conn)                       # el código viene en la página: no se pide
+    assert ov.networks and conn.live is None and conn.pending is None
+
+
+def test_realtek_image_captcha_flow(realtek):
+    realtek.state["captcha_img"] = True
+    conn = Connection(realtek.host, "realtek", "admin", "stdONU101")
+    with pytest.raises(CaptchaRequired) as e:
+        connect(conn)
+    assert not e.value.wrong and e.value.ext == "png" and conn.pending is not None
+    # Código equivocado: se pide otro con una imagen nueva
+    conn.captcha = "0000"
+    with pytest.raises(CaptchaRequired) as e2:
+        connect(conn)
+    assert e2.value.wrong
+    conn.captcha = _code(e2.value.image)
+    ov = connect(conn)
+    assert ov.networks and conn.live is not None
+    images = realtek.state["images"]
+    # Las acciones siguientes reutilizan la sesión: no vuelven a pedir el código
+    devs = list_devices(conn)
+    assert devs and realtek.state["images"] == images
+    target = next(d for d in devs if not d.blocked)
+    after = block(conn, target)
+    assert any(d.mac == target.mac and d.blocked for d in after)
+    n = ov.networks[0]
+    res = change_wifi_each(conn, [(n, None, "NuevaClave99", "NuevaClave99")])
+    assert "clave" in res.message and realtek.state["images"] == images
+    # Si la sesión vence, se vuelve a pedir el código
+    realtek.state["logged"] = False
+    with pytest.raises(CaptchaRequired):
+        list_devices(conn)
+    disconnect(conn)
+    assert conn.live is None and conn.pending is None

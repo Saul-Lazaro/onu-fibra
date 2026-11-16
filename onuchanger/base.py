@@ -40,6 +40,19 @@ class AuthError(OnuError):
     """Usuario o contraseña incorrectos, o cuenta bloqueada temporalmente."""
 
 
+class CaptchaRequired(AuthError):
+    """La ONU pide un código de verificación (imagen) para iniciar sesión.
+
+    `image`: bytes de la imagen tal como la entrega la ONU; `wrong`: el código
+    anterior fue rechazado. La app muestra la imagen, el cliente escribe el código
+    y se reintenta con `Connection.captcha`.
+    """
+
+    def __init__(self, message: str, image: bytes = b"", ext: str = "png", wrong: bool = False):
+        super().__init__(message)
+        self.image, self.ext, self.wrong = image, ext, wrong
+
+
 class NotSupportedError(OnuError):
     """El modelo o firmware no permite esta operación por la interfaz web."""
 
@@ -128,6 +141,8 @@ class OnuDriver(ABC):
         self.username = username or self.default_username
         self.password = password
         self.timeout = timeout
+        self.captcha = ""          # código de verificación escrito por el cliente (si la ONU lo pide)
+        self.captcha_used = False  # True: la sesión se abrió con código (se mantiene abierta)
         self.session = requests.Session()
         # Un solo socket: Huawei ata el token de login a la conexión TCP.
         adapter = requests.adapters.HTTPAdapter(pool_connections=1, pool_maxsize=1, max_retries=0)

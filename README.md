@@ -58,6 +58,20 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
    *Bloquear* / *Desbloquear*. El celular donde está la app aparece
    como **Este celular** y **no se puede bloquear** (la app y el servicio lo rechazan).
 
+## V‑SOL / OptiTimes con código de verificación
+
+Algunas ONUs Realtek (V‑SOL, OptiTimes) piden un **código de verificación** al iniciar sesión:
+
+- Si el código viene escrito en la página (campo oculto `check_code`), la app lo completa sola.
+- Si es una **imagen**, la app la muestra en la ventana *Código de verificación* con un
+  casillero, **Ingresar**, **Otro código** y **Cancelar**. Si el código es incorrecto, muestra
+  uno nuevo.
+- Si la ONU no pide código, no se muestra nada.
+
+Con código, la sesión con la ONU se mantiene abierta entre acciones (cambiar Wi‑Fi, bloquear,
+actualizar lista) para no pedirlo cada vez; si vence, se vuelve a pedir. *Cerrar sesión* la
+cierra. Detección: `find_captcha_image()` en `onuchanger/drivers/realtek.py`.
+
 ## Actualizaciones desde el panel (APP Max Fibra)
 
 Las versiones nuevas se publican en el panel **Red Maxs Solution → APP Max Fibra**

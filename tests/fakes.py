@@ -432,10 +432,36 @@ def realtek_state(brand="V-SOL"):
     }
 
 
+def _code_png(code: str) -> bytes:
+    """PNG con el código dibujado (y guardado en un trozo tEXt para que las pruebas lo lean)."""
+    try:
+        import io
+        from PIL import Image, ImageDraw, PngImagePlugin
+        im = Image.new("RGB", (120, 40), (235, 240, 250))
+        d = ImageDraw.Draw(im)
+        for i, ch in enumerate(code):
+            d.text((14 + i * 26, 8 + (i % 2) * 6), ch, fill=(30 + i * 40, 40, 120), font_size=22)
+        info = PngImagePlugin.PngInfo()
+        info.add_text("code", code)
+        buf = io.BytesIO()
+        im.save(buf, "PNG", pnginfo=info)
+        return buf.getvalue()
+    except Exception:
+        return b"\x89PNG\r\n\x1a\n" + b"tEXtcode\x00" + code.encode()
+
+
 class RealtekHandler(Base):
     def csrf_input(self):
         self.state["csrf"] = "%08x" % random.getrandbits(32)
         return f'<input type="hidden" name="csrftoken" value="{self.state["csrf"]}">'
+
+    def code_html(self):
+        st = self.state
+        if st.get("captcha_img"):   # modelos con imagen: el código NO está en la página
+            return ('<input type="text" name="verification_code" maxlength="4">'
+                    '<img id="imgcode" src="/boaform/admin/getCheckCode?r=1" onclick="this.src+=1">')
+        return (f'<input type="text" name="verification_code"><input type="hidden" id="check_code" '
+                f'value="{st["code"]}">')
 
     def login_page(self):
         st = self.state
@@ -444,7 +470,7 @@ class RealtekHandler(Base):
 function on_submit(){{ with(document.forms[0]){{ username.value=username1.value; psd.value=psd1.value; submit(); }} }}
 </script></head><body><form action=/boaform/admin/formLogin method=POST name="cmlogin">
 <input type="text" name="username1" id="username1"><input type="password" name="psd1" id="psd1">
-<input type="text" name="verification_code"><input type="hidden" id="check_code" value="{st['code']}">
+{self.code_html()}
 <input name="button" type="button" onClick="on_submit();" value="Login">
 <input type="hidden" name="username" id="username" value=''>
 <input type="hidden" name="psd" id="psd" value=''>
@@ -455,6 +481,16 @@ function on_submit(){{ with(document.forms[0]){{ username.value=username1.value;
         st = self.state
         p = urlsplit(self.path)
         q = dict(parse_qsl(p.query))
+        if p.path == "/boaform/admin/getCheckCode":
+            # "Imagen" del código: PNG mínimo con el código en un trozo de texto (tEXt)
+            st["images"] = st.get("images", 0) + 1
+            img = _code_png(st["code"])
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(img)))
+            self.end_headers()
+            self.wfile.write(img)
+            return
         if p.path in ("/", "/admin/login.asp"):
             if not st["logged"]:
                 return self.login_page()

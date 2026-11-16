@@ -28,7 +28,7 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import quote
 
-from ..base import (AuthError, Band, Device, NotSupportedError, OnuDriver, OnuError, WifiNetwork,
+from ..base import (AuthError, Band, CaptchaRequired, Device, NotSupportedError, OnuDriver, OnuError, WifiNetwork,
                     normalize_mac, validate_wifi_password)
 
 SEC_NONE, SEC_WEP, SEC_WPA, SEC_WPA2, SEC_WPA_MIXED = 0, 1, 2, 4, 6
@@ -36,6 +36,34 @@ CIPHER_TKIP, CIPHER_AES = 1, 2
 AUTH_PSK = 2
 AC_OFF, AC_ALLOW, AC_DENY = 0, 1, 2
 LOGIN_PAGES = ("/", "/admin/login.asp", "/admin/login_en.asp")
+# Campo donde se escribe el código de verificación y la imagen que lo muestra.
+CAPTCHA_FIELD = re.compile(r"verif|captcha|vcode|checkcode|check_code|validat|randcode|yzm|safecode|"
+                           r"securecode|^code$|imgcode|authcode", re.I)
+CAPTCHA_IMG = re.compile(r"captcha|vcode|verif|checkcode|check_code|validat|randcode|getimg|imgcode|"
+                         r"authcode|securi|code\.(?:jpg|jpeg|png|gif|bmp)|code\.cgi|code\.asp", re.I)
+
+
+class _ImgParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.imgs = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "img":
+            self.imgs.append({k.lower(): (v or "") for k, v in attrs})
+
+
+def find_captcha_image(html: str) -> str | None:
+    """src de la imagen del código de verificación, si la página tiene una."""
+    p = _ImgParser()
+    p.feed(html)
+    for img in p.imgs:
+        if any(CAPTCHA_IMG.search(img.get(k, "")) for k in ("src", "id", "name", "class", "alt", "onclick")):
+            if img.get("src"):
+                return img["src"]
+    # Imagen que se carga por JavaScript: getElementById("imgcode").src = "/getcode.cgi?" + Math.random()
+    m = re.search(r"\.src\s*=\s*[\"']([^\"']*(?:captcha|vcode|verif|checkcode|code)[^\"']*)[\"']", html, re.I)
+    return m.group(1) if m else None
 
 
 # --- lector de formularios HTML -------------------------------------------
@@ -170,8 +198,7 @@ class RealtekDriver(OnuDriver):
         return text
 
     # --- sesión -------------------------------------------------------------
-    def login(self) -> None:
-        html, page = "", ""
+    def _login_page(self) -> tuple[str, str]:
         for p in LOGIN_PAGES:
             try:
                 r = self.session.get(self._url(p), timeout=self.timeout)
@@ -180,10 +207,39 @@ class RealtekDriver(OnuDriver):
                     raise
                 continue
             if self._is_login(r.text):
-                html, page = r.text, r.url
-                break
-        if not html:
-            raise NotSupportedError("No se encontró el formulario de inicio de sesión de esta ONU.")
+                return r.text, r.url
+        raise NotSupportedError("No se encontró el formulario de inicio de sesión de esta ONU.")
+
+    def _captcha_error(self, html: str, page: str, wrong: bool) -> CaptchaRequired:
+        """Descarga la imagen del código (con la misma sesión) y arma el aviso para la app."""
+        src = find_captcha_image(html)
+        image, ext = b"", "png"
+        if src:
+            url = src if src.startswith("http") else self._url(src if src.startswith("/") else
+                                                                "/" + src.lstrip("./"))
+            r = self.session.get(url, timeout=self.timeout, headers={"Referer": page})
+            image = r.content
+            ctype = r.headers.get("Content-Type", "").lower()
+            ext = ("jpg" if "jpeg" in ctype or "jpg" in ctype else "gif" if "gif" in ctype else
+                   "bmp" if "bmp" in ctype else "png")
+            if image[:3] == b"\xff\xd8\xff":
+                ext = "jpg"
+            elif image[:4] == b"GIF8":
+                ext = "gif"
+            elif image[:2] == b"BM":
+                ext = "bmp"
+        self._login_ctx = (html, page)          # el código vale para ESTA página/sesión
+        msg = ("El código no es correcto (o la contraseña). Escribe el nuevo código." if wrong else
+               "Esta ONU pide un código de verificación para iniciar sesión.")
+        return CaptchaRequired(msg, image=image, ext=ext, wrong=wrong)
+
+    def login(self) -> None:
+        ctx = getattr(self, "_login_ctx", None)
+        if ctx and self.captcha:
+            html, page = ctx                     # misma página en la que se mostró el código
+        else:
+            html, page = self._login_page()
+        self._login_ctx = None
         forms = parse_forms(html)
         form = find_form(forms, "formLogin")
         action = form["action"]
@@ -197,7 +253,11 @@ class RealtekDriver(OnuDriver):
         elif "optictimes" in low or "optitimes" in low:
             self.brand = "OptiTimes"
         pw = self._encode_password(html)
-        fields = []
+        # ¿Código de verificación? Si la página ya trae el valor (#check_code oculto) se
+        # completa solo; si es una imagen, lo escribe el cliente.
+        auto_code = (forms.ids.get("check_code") or {}).get("value", "")
+        has_img = find_captcha_image(html) is not None
+        fields, needs_code = [], False
         for i in form["inputs"]:
             name = i.get("name")
             typ = i.get("type", "text").lower()
@@ -210,10 +270,18 @@ class RealtekDriver(OnuDriver):
                 value = self.username
             elif name in ("psd", "psd1", "password", "Password"):
                 value = pw
-            elif name == "verification_code":
-                value = (forms.ids.get("check_code") or {}).get("value", value)
             elif name == "sec_lang":
                 value = "0"
+            elif typ != "hidden" and CAPTCHA_FIELD.search(name):
+                if auto_code and not has_img:
+                    value = auto_code
+                elif has_img:
+                    needs_code = True
+                    if not self.captcha:
+                        raise self._captcha_error(html, page, wrong=False)
+                    value = self.captcha
+                else:
+                    value = (forms.ids.get("check_code") or {}).get("value", value)
             fields.append((name, value))
         for name, opts in form["selects"].items():
             sel = next((o for o in opts["options"] if o["selected"]), opts["options"][0] if opts["options"] else None)
@@ -224,10 +292,21 @@ class RealtekDriver(OnuDriver):
                               timeout=self.timeout, headers={"Content-Type": "application/x-www-form-urlencoded",
                                                              "Referer": page, "Origin": self.host})
         text = r.text
-        if self._is_login(text) or re.search(r"(bad|wrong|incorrect|error).{0,40}(password|user)", text, re.I):
+        failed = self._is_login(text) or re.search(r"(bad|wrong|incorrect|error).{0,40}(password|user)", text, re.I)
+        code_bad = needs_code and re.search(r"(verif|captcha|check.?code|validat|驗證|验证|código)", text, re.I) \
+            and len(text) < 4000
+        if needs_code and (failed or code_bad):
+            self.captcha = ""
+            fresh = text if (self._is_login(text) and find_captcha_image(text)) else None
+            if fresh:
+                raise self._captcha_error(text, r.url, wrong=True)
+            html2, page2 = self._login_page()
+            raise self._captcha_error(html2, page2, wrong=True)
+        if failed:
             raise AuthError("La ONU rechazó el usuario o la contraseña. Tras varios intentos fallidos se "
                             "bloquea unos minutos.")
         self._get("/admin/wlwpa.asp")   # confirma la sesión
+        self.captcha_used = needs_code
 
     def _encode_password(self, html: str) -> str:
         m = re.search(r"psd\.value\s*=\s*([A-Za-z_$][\w$.]*)\s*\(", html)

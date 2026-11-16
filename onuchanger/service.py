@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import requests
 
-from .base import (Device, NotSupportedError, OnuError, WifiNetwork, normalize_mac, validate_ssid,
+from .base import (AuthError, CaptchaRequired, Device, NotSupportedError, OnuError, WifiNetwork, normalize_mac, validate_ssid,
                    validate_wifi_password)
 from .detect import DRIVERS, default_gateway, get_driver
 
@@ -29,6 +29,11 @@ class Connection:
     username: str
     password: str
     brand_name: str = ""
+    captcha: str = ""                     # código de verificación escrito por el cliente
+    # ONUs con código: la sesión se mantiene abierta entre acciones (si no, habría que
+    # escribir el código en cada una). `pending`: driver esperando el código.
+    live: object = field(default=None, compare=False, repr=False)
+    pending: object = field(default=None, compare=False, repr=False)
 
 
 @dataclass
@@ -54,6 +59,60 @@ def _driver(conn: Connection):
     return d
 
 
+def _open(conn: Connection):
+    """Driver con la sesión iniciada. Puede lanzar CaptchaRequired (se guarda el driver
+    en conn.pending para reintentar con conn.captcha)."""
+    if conn.live is not None:
+        return conn.live
+    d = conn.pending or _driver(conn)
+    conn.pending = None
+    d.captcha = conn.captcha.strip()
+    conn.captcha = ""
+    try:
+        d.login()
+    except CaptchaRequired:
+        conn.pending = d
+        raise
+    if getattr(d, "captcha_used", False):
+        conn.live = d
+    return d
+
+
+def disconnect(conn: Connection | None) -> None:
+    """Cierra la sesión que se mantenía abierta (ONUs con código)."""
+    if conn is None:
+        return
+    for d in (conn.live, conn.pending):
+        if d is not None:
+            try:
+                d.close()
+            except Exception:
+                pass
+    conn.live = conn.pending = None
+
+
+def _with(conn: Connection, fn):
+    """Ejecuta fn(driver) con sesión. Si la sesión mantenida venció, inicia otra vez
+    (lo que en ONUs con código vuelve a pedirlo)."""
+    for attempt in (0, 1):
+        d = _open(conn)
+        kept = d is conn.live
+        try:
+            return fn(d)
+        except AuthError as e:
+            if kept and attempt == 0 and not isinstance(e, CaptchaRequired):
+                conn.live = None             # venció: abrir una sesión nueva
+                try:
+                    d.session.close()
+                except Exception:
+                    pass
+                continue
+            raise
+        finally:
+            if not kept:
+                d.close()
+
+
 def _merge_devices(d) -> list[Device]:
     devices = d.get_devices()
     seen = {x.mac for x in devices}
@@ -62,9 +121,11 @@ def _merge_devices(d) -> list[Device]:
 
 def connect(conn: Connection) -> Overview:
     """Inicia sesión y trae redes y equipos. Rellena conn.brand_name."""
-    d = _driver(conn)
+    if conn.pending is None:
+        disconnect(conn)            # «Conectar» de nuevo: sesión nueva
     ov = Overview()
-    with d:
+
+    def work(d):
         conn.brand_name = d.brand   # algunos drivers afinan la marca al iniciar sesión
         ov.can_rename = d.can_rename_wifi
         if d.can_change_wifi:
@@ -85,6 +146,8 @@ def connect(conn: Connection) -> Overview:
             ov.devices = _merge_devices(d)
         except NotSupportedError as e:
             ov.devices_note = str(e)
+
+    _with(conn, work)
     return ov
 
 
@@ -136,10 +199,9 @@ def change_wifi_each(conn: Connection,
         if key and (ssid or net.ssid, key) not in creds:
             creds.append((ssid or net.ssid, key))
 
-    d = _driver(conn)
     done = []
-    try:
-        d.login()
+
+    def work(d):
         # Primero 5 GHz: si el teléfono está en 2.4 GHz conserva la conexión hasta el final.
         for net, ssid, password in sorted(todo, key=lambda t: t[0].band != "5GHz"):
             d.set_wifi(net, ssid=ssid, password=password)
@@ -147,16 +209,17 @@ def change_wifi_each(conn: Connection,
                 net.extra["psk"] = password
             what = " y ".join(x for x, on in (("nombre", ssid), ("clave", password)) if on)
             done.append(f"{ssid or net.ssid} ({net.band}: {what})")
+
+    try:
+        _with(conn, work)
     except (requests.ConnectionError, requests.Timeout):
+        disconnect(conn)            # el Wi‑Fi cambió: la sesión mantenida ya no sirve
         return ChangeResult(CUT_MSG, creds, cut=True)
-    finally:
-        d.close()
     return ChangeResult("Listo. Cambios guardados en " + ", ".join(done) + ".", creds)
 
 
 def list_devices(conn: Connection) -> list[Device]:
-    with _driver(conn) as d:
-        return _merge_devices(d)
+    return _with(conn, _merge_devices)
 
 
 def block(conn: Connection, device: Device, own_ip: str = "") -> list[Device]:
@@ -164,7 +227,7 @@ def block(conn: Connection, device: Device, own_ip: str = "") -> list[Device]:
     mac = normalize_mac(device.mac)
     if own_ip and device.ip == own_ip:
         raise ValueError("Ese equipo es este celular: no se puede bloquear desde la app.")
-    with _driver(conn) as d:
+    def work(d):
         if own_ip:   # la IP puede haber cambiado desde que se mostró la lista
             now = next((x for x in d.get_devices() if x.mac == mac), None)
             if now is not None and now.ip == own_ip:
@@ -172,9 +235,13 @@ def block(conn: Connection, device: Device, own_ip: str = "") -> list[Device]:
         d.block_device(mac, device.name)
         return _merge_devices(d)
 
+    return _with(conn, work)
+
 
 def unblock(conn: Connection, device: Device) -> list[Device]:
     mac = normalize_mac(device.mac)
-    with _driver(conn) as d:
+    def work(d):
         d.unblock_device(mac)
         return _merge_devices(d)
+
+    return _with(conn, work)

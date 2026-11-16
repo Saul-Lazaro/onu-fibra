@@ -22,10 +22,13 @@ from kivy.uix.textinput import TextInput
 
 from onuchanger.android_wifi import on_android, save_and_connect
 from onuchanger.update import AndroidInstaller, DownloadError, check_update, download_apk
-from onuchanger.base import OnuError
+from onuchanger.base import CaptchaRequired, OnuError
+from kivy.uix.anchorlayout import AnchorLayout
+from kivy.uix.image import Image as KivyImage
 from onuchanger.version import VERSION
 from onuchanger.isp import ISP_MESSAGE, ISP_PHONES, WHATSAPP_TEXT, check_unlock_password, isp_reachable
-from onuchanger.service import (BRAND_KEYS, USER_HINTS, Connection, block, change_wifi_each, connect, list_devices,
+from onuchanger.service import (BRAND_KEYS, USER_HINTS, Connection, block, change_wifi_each, connect, disconnect,
+                                list_devices,
                                 suggest_host, unblock)
 
 Window.softinput_mode = "below_target"  # el teclado no tapa el campo activo
@@ -602,6 +605,7 @@ class Root(BoxLayout):
             self.status = "Tus datos están guardados: pulsa Conectar."
         self.update_info = None
         self._installer = None
+        self._connecting = None
         self._downloaded = ""
         Clock.schedule_once(lambda *_: self.check_updates(), 1.5)
 
@@ -614,6 +618,8 @@ class Root(BoxLayout):
         def target():
             try:
                 result = work()
+            except CaptchaRequired as e:      # la ONU pide el código de la imagen
+                self._captcha(e, lambda: self._run(work, on_ok, busy_text))
             except (OnuError, ValueError) as e:
                 self._done(None, str(e))
             except Exception as e:  # red caída, tiempo agotado, respuesta inesperada
@@ -623,6 +629,80 @@ class Root(BoxLayout):
                 self._done(lambda: on_ok(result), None)
 
         threading.Thread(target=target, daemon=True).start()
+
+    @mainthread
+    def _captcha(self, err, retry):
+        """Muestra la imagen del código de verificación y reintenta con lo que escriba el cliente."""
+        self.busy = False
+        conn = self._captcha_conn()
+        self._msg(str(err), ok=False if err.wrong else None)
+        box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(10), size_hint_y=None)
+        box.bind(minimum_height=box.setter("height"))
+        box.add_widget(_wrap_label(str(err), halign="center"))
+        shown = False
+        if err.image:
+            try:
+                from io import BytesIO
+                from kivy.core.image import Image as CoreImage
+                tex = CoreImage(BytesIO(err.image), ext=err.ext).texture
+                h = dp(70)
+                w = min(dp(260), h * tex.width / max(tex.height, 1))
+                holder = AnchorLayout(size_hint_y=None, height=h + dp(8))
+                img = KivyImage(texture=tex, size_hint=(None, None), size=(w, h), allow_stretch=True)
+                holder.add_widget(img)
+                box.add_widget(holder)
+                shown = True
+            except Exception:
+                shown = False
+        if not shown:
+            box.add_widget(_wrap_label("No se pudo mostrar la imagen del código: toca «Otro código».",
+                                       halign="center"))
+        field = Factory.Field(hint_text="Escribe el código de la imagen", multiline=False)
+        box.add_widget(field)
+        popup = Popup(title="Código de verificación", content=box, size_hint=(0.92, None), auto_dismiss=False)
+
+        def send(*_):
+            code = field.text.strip()
+            if not code:
+                field.hint_text = "Escribe el código antes de continuar"
+                return
+            popup.dismiss()
+            if conn is not None:
+                conn.captcha = code
+            retry()
+
+        def other(*_):
+            popup.dismiss()
+            if conn is not None:
+                conn.captcha = ""
+            retry()
+
+        def cancel(*_):
+            popup.dismiss()
+            if conn is not None and conn is not self.conn:
+                disconnect(conn)
+            self._msg("Inicio de sesión cancelado.", ok=None)
+
+        field.bind(on_text_validate=send)
+        row = BoxLayout(size_hint_y=None, height=dp(48), spacing=dp(8))
+        go = RoundButton(text="Ingresar", bg=GREEN)
+        go.bind(on_release=send)
+        again = RoundButton(text="Otro código", bg=SOFT, color=DARK)
+        again.bind(on_release=other)
+        row.add_widget(go)
+        row.add_widget(again)
+        box.add_widget(row)
+        close = RoundButton(text="Cancelar", size_hint_y=None, height=dp(44), bg=GREY)
+        close.bind(on_release=cancel)
+        box.add_widget(close)
+        box.bind(height=lambda *_: setattr(popup, "height", box.height + dp(92)))
+        popup.height = box.height + dp(92)
+        popup.open()
+        Clock.schedule_once(lambda *_: setattr(field, "focus", True), 0.3)
+
+    def _captcha_conn(self):
+        """La conexión que está pidiendo el código (la de la sesión o la del «Conectar» en curso)."""
+        return self.conn if self.conn is not None and self.conn.pending is not None else self._connecting
 
     @mainthread
     def _done(self, callback, error):
@@ -762,13 +842,15 @@ class Root(BoxLayout):
         self.ids.nets.clear_widgets()
         self.ids.devs.clear_widgets()
         self.net_rows = []
+        disconnect(self._connecting)
         conn = Connection(self.ids.host.text, BRAND_KEYS[self.ids.brand.text], self.ids.user.text,
                           self.ids.admin.text)
+        self._connecting = conn
         self.my_ip = own_ip(conn.host)
         skip_isp = self.unlocked
 
         def work():
-            if not skip_isp:
+            if not skip_isp and conn.pending is None:   # al reintentar con el código no se repite
                 self._progress("Verificando conexión con el proveedor…")
                 if not isp_reachable():
                     raise OnuError(ISP_MESSAGE)
@@ -783,6 +865,7 @@ class Root(BoxLayout):
 
     def _show(self, conn, ov):
         self.conn = conn
+        self._connecting = None
         self.ids.user.text = conn.username
         self.wifi_note = ov.wifi_note
         self.devices_note = ov.devices_note
@@ -973,6 +1056,8 @@ class Root(BoxLayout):
         """Vuelve a la tarjeta 1 (los datos guardados se conservan)."""
         if self.busy:
             return
+        conn = self.conn
+        threading.Thread(target=lambda: disconnect(conn), daemon=True).start()
         self.connected = self.can_wifi = self.devices_open = False
         self.conn = None
         self.ids.nets.clear_widgets()
