@@ -10,7 +10,7 @@ import re
 import threading
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qsl, unquote, urlsplit
+from urllib.parse import parse_qs, parse_qsl, unquote, urlparse, urlsplit
 
 
 def hexesc(s: str) -> str:
@@ -666,3 +666,115 @@ function on_submit(){{ with(document.forms[0]){{ username.value=username1.value;
                     return self.err("There is no item selected to delete!")
             return self.ok("/admin/wlactrl.asp")
         return self.send("nf", 404)
+
+
+# --- ZTE con panel antiguo (.gch), p. ej. F670L con firmware viejo -----------------------
+def zte_legacy_state():
+    return {"user": "admin", "password": "ClaveZTE1", "token": 40, "sid": "", "sess": "8812345",
+            "fails": 0, "locked": False, "applies": [],
+            "aps": {0: {"ESSID": "ZTE-Casa", "Enable": "1", "_InstID": "DEV.WIFI.AP1", "KeyPassphrase": "Vieja2G123"},
+                    1: {"ESSID": "ZTE-Invitado", "Enable": "0", "_InstID": "DEV.WIFI.AP2", "KeyPassphrase": ""},
+                    4: {"ESSID": "ZTE-Casa-5G", "Enable": "1", "_InstID": "DEV.WIFI.AP5", "KeyPassphrase": "Vieja5G123"}},
+            "lan": [("AA:BB:CC:00:00:01", "192.168.1.5", "celular", "SSID1"),
+                    ("AA:BB:CC:00:00:02", "192.168.1.6", "tv", "SSID5"),
+                    ("AA:BB:CC:00:00:03", "192.168.1.7", "pc", "LAN1")]}
+
+
+class ZteLegacyHandler(Base):
+    def _logged(self):
+        st = self.state
+        return st["sid"] and f"SID={st['sid']}" in (self.headers.get("Cookie") or "")
+
+    def login_page(self, msg=""):
+        st = self.state
+        st["token"] += 1                      # el token cambia en cada petición
+        return self.send(f"""<html><head><title>F670L</title>
+<script src="/js/sha256.js"></script></head><body>
+<form name="fLogin" method="post" action="">
+<input type="hidden" name="Frm_Logintoken" id="Frm_Logintoken" value="">
+<input type="hidden" name="UserRandomNum" id="UserRandomNum" value="">
+<input type="text" name="Frm_Username" id="Frm_Username"><input type="password" name="Frm_Password" id="Frm_Password">
+</form><script>getObj("Frm_Logintoken").value = "{st['token']}";
+function Login(){{ var r = Math.round(Math.random()*89999999)+10000000; getObj("UserRandomNum").value = r;
+ getObj("Password").value = sha256(getObj("Frm_Password").value + r); }}</script>
+<div>{msg}</div></body></html>""")
+
+    def tm(self, rows):
+        return "\n".join(f"Transfer_meaning('{k}{i}','{v}');" for i, d in rows for k, v in d.items())
+
+    def page(self, name):
+        st = self.state
+        if name == "net_wlanm_essid1_t.gch":
+            rows = [(i, {"ESSID": a["ESSID"], "Enable": a["Enable"], "_InstID": a["_InstID"]}) for i, a in st["aps"].items()]
+            fields = ["ESSID", "Enable", "ESSIDHideEnable"]
+        elif name == "net_wlanm_secrity1_t.gch":
+            rows = [(i, {"KeyPassphrase": a["KeyPassphrase"], "BeaconType": "WPAand11i", "_InstID": a["_InstID"]})
+                    for i, a in st["aps"].items()]
+            fields = ["BeaconType", "WPAAuthMode", "KeyPassphrase"]
+        elif name == "status_lan_info_t.gch":
+            rows = [(i, {"MACAddr": m, "IPAddr": ip, "HostName": h, "PhyPortName": p}) for i, (m, ip, h, p) in enumerate(st["lan"])]
+            return self.send("<html><script>" + self.tm(rows) + "</script>" + "x" * 1200 + "</html>")
+        else:
+            return self.send("<html>no</html>", 404)
+        inputs = "".join(f'<input type="hidden" name="{f}" value="">' for f in fields)
+        return self.send(f"""<html><script>var session_token = "{st['sess']}";
+{self.tm(rows)}</script>
+<form name="fSubmit" method="post" action="">
+<input type="hidden" name="IF_ACTION" value=""><input type="hidden" name="IF_ERRORSTR" value="SUCC">
+<input type="hidden" name="IF_ERRORPARAM" value="SUCC"><input type="hidden" name="IF_ERRORTYPE" value="-1">
+<input type="hidden" name="_InstID" value="">{inputs}
+<input type="hidden" name="_SESSION_TOKEN" value="">
+<input type="text" name="Frm_ESSID" id="Frm_ESSID"></form></html>""")
+
+    def do_GET(self):
+        st = self.state
+        p = urlparse(self.path)
+        if p.path == "/":
+            return self.login_page()
+        if not self._logged():
+            return self.login_page()
+        if p.path == "/template.gch":
+            return self.send(f"<html><script>var session_token = '{st['sess']}';</script></html>")
+        if p.path == "/getpage.gch":
+            return self.page(parse_qs(p.query).get("nextpage", [""])[0])
+        return self.send("no", 404)
+
+    def do_POST(self):
+        st = self.state
+        p = urlparse(self.path)
+        f = {k: v[0] for k, v in parse_qs(self.body(), keep_blank_values=True).items()}
+        if p.path == "/":
+            if f.get("logout"):
+                st["sid"] = ""
+                return self.send("ok")
+            if st["locked"]:
+                return self.login_page("You have login failed for three times")
+            ok_token = f.get("Frm_Logintoken") == str(st["token"])
+            expect = hashlib.sha256((st["password"] + f.get("UserRandomNum", "")).encode()).hexdigest()
+            if f.get("action") == "login" and ok_token and f.get("Username") == st["user"] and f.get("Password") == expect:
+                st["sid"] = "S" + str(st["token"])
+                st["fails"] = 0
+                self.send_response(302)
+                self.send_header("Location", "/start.ghtml")
+                self.send_header("Set-Cookie", f"SID={st['sid']}; path=/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            st["fails"] += 1
+            st["locked"] = st["fails"] >= 3
+            return self.login_page("User information is error")
+        if not self._logged():
+            return self.login_page()
+        if p.path == "/getpage.gch":
+            name = parse_qs(p.query).get("nextpage", [""])[0]
+            st["applies"].append((name, f))
+            if f.get("_SESSION_TOKEN") != st["sess"] or f.get("IF_ACTION") != "apply":
+                return self.send("<script>Transfer_meaning('IF_ERRORSTR','SessionTokenError');</script>")
+            ap = next((a for a in st["aps"].values() if a["_InstID"] == f.get("_InstID")), None)
+            if ap is None:
+                return self.send("<script>Transfer_meaning('IF_ERRORSTR','InstIDError');</script>")
+            for k in ("ESSID", "KeyPassphrase"):
+                if k in f and (name.startswith("net_wlanm_essid") if k == "ESSID" else name.startswith("net_wlanm_secrity")):
+                    ap[k] = f[k]
+            return self.page(name)
+        return self.send("no", 404)

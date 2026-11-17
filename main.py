@@ -275,7 +275,7 @@ KV = """
                         font_size: "15sp"
                         on_release: root.logout()
                 Section:
-                    text: "Bloquear equipos en la red"
+                    text: "Bloquear equipos en la red" if root.can_block else "Ver equipos en la red"
                 Label:
                     text: root.session_text
                     color: MUTED
@@ -316,7 +316,7 @@ KV = """
                     height: dp(54)
                     spacing: dp(10)
                     RoundButton:
-                        text: "Bloquear equipos en la red"
+                        text: "Bloquear equipos en la red" if root.can_block else "Ver equipos en la red"
                         bg: 0.839, 0.271, 0.271, 1
                         font_size: "14sp"
                         halign: "center"
@@ -573,6 +573,7 @@ class Root(BoxLayout):
     connected = BooleanProperty(False)
     can_wifi = BooleanProperty(False)
     can_rename = BooleanProperty(True)
+    can_block = BooleanProperty(True)
     unlocked = BooleanProperty(False)   # modo técnico: no verifica el proveedor (hasta desinstalar)
     has_saved = BooleanProperty(False)  # hay usuario/contraseña guardados
     session_text = StringProperty("")
@@ -898,6 +899,7 @@ class Root(BoxLayout):
             self.net_rows.append((ti, pw, cf, n))
         self.can_wifi = bool(ov.networks)
         self.can_rename = ov.can_rename
+        self.can_block = ov.can_block
         self._show_devices(ov.devices)
         self.connected = True
         self.session_text = f"Conectado a tu ONU {conn.brand_name} · {conn.host}"
@@ -1124,7 +1126,7 @@ class Root(BoxLayout):
                 # El celular donde está la app no se puede bloquear: perdería la conexión.
                 row.add_widget(Label(text="Este celular", size_hint_x=None, width=dp(118), bold=True,
                                      font_size="14sp", color=DARK))
-            else:
+            elif self.can_block:
                 btn = RoundButton(text="Desbloquear" if d.blocked else "Bloquear", size_hint_x=None,
                                   width=dp(118), bg=GREEN if d.blocked else RED, font_size="15sp",
                                   size_hint_y=None, height=dp(50), pos_hint={"center_y": 0.5})

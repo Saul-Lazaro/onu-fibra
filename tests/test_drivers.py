@@ -562,3 +562,46 @@ def test_realtek_image_captcha_flow(realtek):
         list_devices(conn)
     disconnect(conn)
     assert conn.live is None and conn.pending is None
+
+
+# --- ZTE con panel antiguo (F670L firmware viejo) -----------------------------------
+from fakes import ZteLegacyHandler, zte_legacy_state
+from onuchanger.detect import detect_brand
+
+
+@pytest.fixture
+def ztel():
+    with FakeServer(ZteLegacyHandler, zte_legacy_state()) as srv:
+        yield srv
+
+
+def test_zte_legacy_detect_and_connect(ztel):
+    assert detect_brand(ztel.host) == "zte_legacy"
+    conn = Connection(ztel.host, "zte", "admin", "ClaveZTE1")     # elegido «ZTE» a mano
+    ov = connect(conn)
+    assert conn.brand_key == "zte_legacy" and conn.brand_name == "ZTE"
+    assert [(n.ssid, n.band) for n in ov.networks] == [("ZTE-Casa", "2.4GHz"), ("ZTE-Casa-5G", "5GHz")]
+    assert {d.name: d.interface for d in ov.devices} == {"celular": "2.4GHz", "tv": "5GHz", "pc": "Cable"}
+    assert not ov.can_block if hasattr(ov, "can_block") else True
+
+
+def test_zte_legacy_change_wifi(ztel):
+    conn = Connection(ztel.host, None, "admin", "ClaveZTE1")
+    ov = connect(conn)
+    n24, n5 = ov.networks
+    res = change_wifi_each(conn, [(n24, "Casa-Nueva", "NuevaClave24", "NuevaClave24"),
+                                  (n5, None, "NuevaClave5G", "NuevaClave5G")])
+    aps = ztel.state["aps"]
+    assert aps[0]["ESSID"] == "Casa-Nueva" and aps[0]["KeyPassphrase"] == "NuevaClave24"
+    assert aps[4]["KeyPassphrase"] == "NuevaClave5G" and aps[4]["ESSID"] == "ZTE-Casa-5G"
+    assert aps[1]["ESSID"] == "ZTE-Invitado"                # las demás redes no se tocan
+    assert "Casa-Nueva" in res.message
+    name, sent = ztel.state["applies"][0]
+    assert sent["IF_ACTION"] == "apply" and sent["_InstID"] == "DEV.WIFI.AP5" and "Frm_ESSID" not in sent
+
+
+def test_zte_legacy_wrong_password_single_attempt(ztel):
+    conn = Connection(ztel.host, "zte", "admin", "mala")
+    with pytest.raises(AuthError, match="rechazó"):
+        connect(conn)
+    assert ztel.state["fails"] == 1                            # un solo intento: no se bloquea

@@ -58,6 +58,21 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
    *Bloquear* / *Desbloquear*. El celular donde está la app aparece
    como **Este celular** y **no se puede bloquear** (la app y el servicio lo rechazan).
 
+## ZTE con panel antiguo (F670L/F660/F609 con firmware viejo)
+
+Se reconoce por la página de inicio con `Frm_Logintoken` (encabezado verde «Please login
+to continue…»). Driver: `onuchanger/drivers/zte_legacy.py`. Al elegir «ZTE», la app usa
+este driver automáticamente si la ONU tiene el panel antiguo.
+
+- Inicio de sesión: un solo intento por vez (la ONU se bloquea tras 3 fallos), con el
+  cifrado que indique la página (SHA‑256 o MD5 con `UserRandomNum`, o sin cifrar).
+  Esta ONU acepta **una sola sesión**: si el panel está abierto en el navegador, ciérralo.
+- Wi‑Fi: lee `net_wlanm_essid1_t.gch` / `net_wlanm_secrity1_t.gch`; para cambiar reenvía
+  el formulario de la página (`IF_ACTION=apply`, `_InstID`, `_SESSION_TOKEN`) y confirma
+  leyendo otra vez.
+- Equipos: solo para ver (`status_lan_info_t.gch`); bloquear aún no está disponible.
+- **Probado solo con una ONU simulada**: falta confirmarlo con una F670L real.
+
 ## V‑SOL / OptiTimes con código de verificación
 
 Algunas ONUs Realtek (V‑SOL, OptiTimes) piden un **código de verificación** al iniciar sesión:

@@ -43,6 +43,7 @@ class Overview:
     devices: list[Device] = field(default_factory=list)
     devices_note: str = ""
     can_rename: bool = True        # False: solo se puede cambiar la clave
+    can_block: bool = True         # False: la lista de equipos es solo para ver
 
 
 def suggest_host() -> str:
@@ -128,6 +129,9 @@ def connect(conn: Connection) -> Overview:
     def work(d):
         conn.brand_name = d.brand   # algunos drivers afinan la marca al iniciar sesión
         ov.can_rename = d.can_rename_wifi
+        ov.can_block = d.can_block
+        if not d.can_block and not ov.devices_note:
+            ov.devices_note = "En este modelo de ONU la app aún no puede bloquear equipos; aquí puedes verlos."
         if d.can_change_wifi:
             try:
                 # Solo las redes encendidas: las apagadas no se muestran.
