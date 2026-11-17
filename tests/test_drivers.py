@@ -605,3 +605,21 @@ def test_zte_legacy_wrong_password_single_attempt(ztel):
     with pytest.raises(AuthError, match="rechazó"):
         connect(conn)
     assert ztel.state["fails"] == 1                            # un solo intento: no se bloquea
+
+
+def test_zte_legacy_with_validate_code(ztel):
+    ztel.state["captcha"] = True
+    conn = Connection(ztel.host, "zte", "admin", "ClaveZTE1")
+    with pytest.raises(CaptchaRequired) as e:
+        connect(conn)
+    assert e.value.image and not e.value.wrong
+    conn.captcha = "xxxx"
+    with pytest.raises(CaptchaRequired) as e2:
+        connect(conn)
+    assert e2.value.wrong
+    conn.captcha = ztel.state["vcode"]
+    ov = connect(conn)
+    assert ov.networks and conn.live is not None
+    imgs = ztel.state["images"]
+    list_devices(conn)
+    assert ztel.state["images"] == imgs          # no vuelve a pedir el código

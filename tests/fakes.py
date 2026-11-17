@@ -694,6 +694,7 @@ class ZteLegacyHandler(Base):
 <input type="hidden" name="Frm_Logintoken" id="Frm_Logintoken" value="">
 <input type="hidden" name="UserRandomNum" id="UserRandomNum" value="">
 <input type="text" name="Frm_Username" id="Frm_Username"><input type="password" name="Frm_Password" id="Frm_Password">
+{'<input type="text" name="Validatecode" id="Validatecode"><img id="imgcode" src="/getValidateCode.gch">' if st.get("captcha") else ""}
 </form><script>getObj("Frm_Logintoken").value = "{st['token']}";
 function Login(){{ var r = Math.round(Math.random()*89999999)+10000000; getObj("UserRandomNum").value = r;
  getObj("Password").value = sha256(getObj("Frm_Password").value + r); }}</script>
@@ -731,6 +732,16 @@ function Login(){{ var r = Math.round(Math.random()*89999999)+10000000; getObj("
         p = urlparse(self.path)
         if p.path == "/":
             return self.login_page()
+        if p.path == "/getValidateCode.gch":
+            st["vcode"] = "%04d" % random.randint(0, 9999)
+            st["images"] = st.get("images", 0) + 1
+            img = _code_png(st["vcode"])
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(img)))
+            self.end_headers()
+            self.wfile.write(img)
+            return
         if not self._logged():
             return self.login_page()
         if p.path == "/template.gch":
@@ -751,6 +762,9 @@ function Login(){{ var r = Math.round(Math.random()*89999999)+10000000; getObj("
                 return self.login_page("You have login failed for three times")
             ok_token = f.get("Frm_Logintoken") == str(st["token"])
             expect = hashlib.sha256((st["password"] + f.get("UserRandomNum", "")).encode()).hexdigest()
+            code_ok = not st.get("captcha") or (f.get("Validatecode") and f.get("Validatecode") == st.get("vcode"))
+            if st.get("captcha") and not code_ok:
+                return self.login_page("Error")
             if f.get("action") == "login" and ok_token and f.get("Username") == st["user"] and f.get("Password") == expect:
                 st["sid"] = "S" + str(st["token"])
                 st["fails"] = 0

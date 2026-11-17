@@ -23,10 +23,11 @@ import random
 import re
 from html.parser import HTMLParser
 
-from ..base import (AuthError, Band, Device, NotSupportedError, OnuDriver, OnuError, WifiNetwork,
+from ..base import (AuthError, Band, CaptchaRequired, Device, NotSupportedError, OnuDriver, OnuError, WifiNetwork,
                     normalize_mac, validate_ssid, validate_wifi_password)
 
 PAGE = "/getpage.gch?pid=1002&nextpage={}"
+CODE_FIELDS = ("Validatecode", "ValidateCode", "Frm_Validatecode", "verifycode", "VerifyCode", "checkcode")
 SSID_PAGES = ("net_wlanm_essid1_t.gch", "net_wlanm_essid_t.gch")
 SEC_PAGES = ("net_wlanm_secrity1_t.gch", "net_wlanm_secrity_t.gch")
 STATUS_PAGES = ("status_wlanm_info1_t.gch", "status_wlanm_info_t.gch")
@@ -124,6 +125,20 @@ class ZteLegacyDriver(OnuDriver):
             raise NotSupportedError("No se encontró el formulario de inicio de sesión de esta ONU ZTE.")
         if re.search(r"login failed for three times|locked|lockingTime\s*=\s*['\"]?[1-9]", page, re.I):
             raise AuthError("La ONU está bloqueada por intentos fallidos. Espera unos minutos y vuelve a intentar.")
+        # Código de verificación (algunos ZTE antiguos, p. ej. F602W/F680 de ciertos ISP)
+        code_field = next((f for f in CODE_FIELDS if re.search(rf"name=[\"']?{f}\b", page)), None)
+        if code_field:
+            from .realtek import find_captcha_image
+            src = find_captcha_image(page) or "/getValidateCode.gch"
+            if not self.captcha:
+                url = src if src.startswith("http") else self._url(src if src.startswith("/") else "/" + src.lstrip("./"))
+                r = self.session.get(url, timeout=self.timeout, headers={"Referer": self.host + "/"})
+                ctype = r.headers.get("Content-Type", "").lower()
+                ext = "jpg" if ("jpeg" in ctype or r.content[:3] == b"\xff\xd8\xff") else \
+                    "gif" if r.content[:4] == b"GIF8" else "bmp" if r.content[:2] == b"BM" else "png"
+                raise CaptchaRequired("Esta ONU pide un código de verificación para iniciar sesión.",
+                                      image=r.content, ext=ext)
+            page = self._home()        # token nuevo; el código sigue siendo el de la imagen mostrada
         token = _token(page, "Frm_Logintoken") or ""
         check = _token(page, "Frm_Loginchecktoken")
         low = page.lower()
@@ -140,12 +155,30 @@ class ZteLegacyDriver(OnuDriver):
             data["UserRandomNum"] = rnd
         if check is not None:
             data["Frm_Loginchecktoken"] = check
+        if code_field:
+            data[code_field.replace("Frm_", "") if code_field.startswith("Frm_") else code_field] = self.captcha
+            if "checkValidateCode" in page:
+                try:   # la página valida primero el código aparte, como hace el navegador
+                    self.session.post(self._url("/checkValidateCode.gch"), data={code_field: self.captcha},
+                                      timeout=self.timeout)
+                except Exception:
+                    pass
         r = self.session.post(self._url("/"), data=data, timeout=self.timeout,
                               headers={"Origin": self.host, "Referer": self.host + "/"})
         text = r.text
         if re.search(r"three times|tres veces|login failed for", text, re.I):
             raise AuthError("La ONU se bloqueó por intentos fallidos. Espera unos minutos y revisa la contraseña.")
         sid = self.session.cookies.get("SID")
+        if code_field and (not sid or "Frm_Logintoken" in text) and not re.search(r"User information is error", text, re.I):
+            self.captcha = ""
+            try:
+                self.login()                 # pide una imagen nueva
+            except CaptchaRequired as e:
+                e.wrong = True
+                e.args = ("El código no es correcto. Escribe el nuevo código.",)
+                raise
+        if code_field:
+            self.captcha_used = True
         if re.search(r"User information is error|username or password|error de usuario", text, re.I) or (
                 not sid and "Frm_Logintoken" in text):
             raise AuthError("La ONU ZTE rechazó el usuario o la contraseña. Ojo: tras 3 intentos fallidos "

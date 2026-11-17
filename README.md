@@ -58,7 +58,7 @@ En Linux/WSL: `pip install buildozer cython==0.29.34` y `buildozer android debug
    *Bloquear* / *Desbloquear*. El celular donde está la app aparece
    como **Este celular** y **no se puede bloquear** (la app y el servicio lo rechazan).
 
-## ZTE con panel antiguo (F670L/F660/F609 con firmware viejo)
+## ZTE con panel antiguo (F670L/F680/F660/F609 con firmware viejo)
 
 Se reconoce por la página de inicio con `Frm_Logintoken` (encabezado verde «Please login
 to continue…»). Driver: `onuchanger/drivers/zte_legacy.py`. Al elegir «ZTE», la app usa
@@ -70,6 +70,8 @@ este driver automáticamente si la ONU tiene el panel antiguo.
 - Wi‑Fi: lee `net_wlanm_essid1_t.gch` / `net_wlanm_secrity1_t.gch`; para cambiar reenvía
   el formulario de la página (`IF_ACTION=apply`, `_InstID`, `_SESSION_TOKEN`) y confirma
   leyendo otra vez.
+- Código de verificación (`Validatecode`, en algunos ZTE de ISP): la app muestra la imagen
+  igual que en V‑SOL y mantiene la sesión abierta.
 - Equipos: solo para ver (`status_lan_info_t.gch`); bloquear aún no está disponible.
 - **Probado solo con una ONU simulada**: falta confirmarlo con una F670L real.
 
