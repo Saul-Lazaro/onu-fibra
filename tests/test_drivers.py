@@ -623,3 +623,11 @@ def test_zte_legacy_with_validate_code(ztel):
     imgs = ztel.state["images"]
     list_devices(conn)
     assert ztel.state["images"] == imgs          # no vuelve a pedir el código
+
+
+def test_diagnostic_collects_login_page_without_password(realtek):
+    from onuchanger.diagnose import collect
+    text = collect(realtek.host, brand="OptiTimes", username="admin", error="La ONU rechazó…", version="0.3.22")
+    assert "formLogin" in text and "Error: La ONU rechazó" in text
+    assert "stdONU101" not in text                    # nunca la contraseña
+    assert realtek.state.get("fails", 0) == 0          # no intentó iniciar sesión

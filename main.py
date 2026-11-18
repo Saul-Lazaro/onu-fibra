@@ -21,6 +21,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.textinput import TextInput
 
 from onuchanger.android_wifi import on_android, save_and_connect
+from onuchanger import diagnose
 from onuchanger.update import AndroidInstaller, DownloadError, check_update, download_apk
 from onuchanger.base import CaptchaRequired, OnuError
 from kivy.uix.anchorlayout import AnchorLayout
@@ -631,6 +632,24 @@ class Root(BoxLayout):
 
         threading.Thread(target=target, daemon=True).start()
 
+    def share_diagnostic(self, error=""):
+        """Junta la página de inicio de la ONU (sin la contraseña) y abre «Compartir»."""
+        host, brand, user = self.ids.host.text.strip(), self.ids.brand.text, self.ids.user.text.strip()
+        version = App.get_running_app().version_text
+
+        def work():
+            return diagnose.collect(host, brand=brand, username=user, error=error, version=version)
+
+        def done(text):
+            try:
+                diagnose.share_text(text)
+                if not on_android():
+                    self._msg("Diagnóstico copiado al portapapeles.", ok=True)
+            except Exception as e:
+                self._msg(f"No se pudo compartir ({e.__class__.__name__}).", ok=False)
+
+        self._run(work, done, "Preparando el diagnóstico…")
+
     @mainthread
     def _captcha(self, err, retry):
         """Muestra la imagen del código de verificación y reintenta con lo que escriba el cliente."""
@@ -713,11 +732,12 @@ class Root(BoxLayout):
             if error == ISP_MESSAGE:
                 self._alert("Sin conexión con el proveedor", error, phones=ISP_PHONES, center=True)
             else:
-                self._alert("No se pudo completar", error, panel=not self.connected)
+                self._alert("No se pudo completar", error, panel=not self.connected,
+                            diag=not self.connected)
         else:
             callback()
 
-    def _alert(self, title, text, panel=False, phones=(), center=False):
+    def _alert(self, title, text, panel=False, phones=(), center=False, diag=False):
         """Ventana de mensaje. `phones`: botones de WhatsApp; `panel`: abrir el panel web."""
         box = BoxLayout(orientation="vertical", padding=dp(12), spacing=dp(12), size_hint_y=None)
         box.bind(minimum_height=box.setter("height"))
@@ -730,6 +750,11 @@ class Root(BoxLayout):
             url = f"https://wa.me/51{number}?text={quote(WHATSAPP_TEXT)}"
             chat.bind(on_release=lambda *_, u=url: open_in_browser(u))
             box.add_widget(chat)
+        if diag:
+            share = RoundButton(text="Compartir diagnóstico", size_hint_y=None, height=dp(48), bg=SOFT,
+                                color=DARK)
+            share.bind(on_release=lambda *_: (popup.dismiss(), self.share_diagnostic(text)))
+            box.add_widget(share)
         if panel:
             web = RoundButton(text="Abrir panel de la ONU", size_hint_y=None, height=dp(48),
                               bg=SOFT, color=DARK)

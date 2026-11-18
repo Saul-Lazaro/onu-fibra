@@ -75,6 +75,16 @@ este driver automáticamente si la ONU tiene el panel antiguo.
 - Equipos: solo para ver (`status_lan_info_t.gch`); bloquear aún no está disponible.
 - **Probado solo con una ONU simulada**: falta confirmarlo con una F670L real.
 
+## Diagnóstico de ONUs no reconocidas
+
+Si *Conectar* falla, la ventana de error ofrece **Compartir diagnóstico**: la app guarda la
+página de inicio de sesión de la ONU y las líneas relevantes de su JavaScript (cifrado de la
+contraseña, tokens, código de verificación) y abre «Compartir» de Android (WhatsApp, correo).
+No incluye la contraseña ni intenta iniciar sesión. Código: `onuchanger/diagnose.py`.
+
+Pendiente con diagnóstico: OptiTimes **ZX8414DW** (interfaz azul Realtek, firmware V2.0,
+LATIN_AMERICA_CONFIG).
+
 ## V‑SOL / OptiTimes con código de verificación
 
 Algunas ONUs Realtek (V‑SOL, OptiTimes) piden un **código de verificación** al iniciar sesión:
